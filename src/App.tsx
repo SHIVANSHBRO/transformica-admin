@@ -20,6 +20,7 @@ export function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [role, setRole] = useState<string | null>(null);
   const [booting, setBooting] = useState(true);
+  const [bootError, setBootError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('Overview');
   const [toast, setToast] = useState<{ message: string; kind: 'ok' | 'error' } | null>(null);
 
@@ -29,10 +30,13 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
-      setBooting(false);
-    });
+    // Always resolve booting, even if auth init fails — otherwise the app is
+    // stuck on a blank screen with no clue why.
+    supabase.auth
+      .getSession()
+      .then(({ data }) => setSession(data.session))
+      .catch((e: unknown) => setBootError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setBooting(false));
     const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
     return () => sub.subscription.unsubscribe();
   }, []);
@@ -42,17 +46,23 @@ export function App() {
       setRole(null);
       return;
     }
+    // A failed role lookup falls through to 'unknown' → the "not an admin"
+    // screen, never a blank one.
     supabase
       .from('profiles')
       .select('role')
       .eq('id', session.user.id)
       .maybeSingle()
-      .then(({ data }) => setRole(data?.role ?? 'unknown'));
+      .then(
+        ({ data }) => setRole(data?.role ?? 'unknown'),
+        () => setRole('unknown')
+      );
   }, [session]);
 
-  if (booting) return null;
+  if (bootError) return <Splash message={`Couldn't reach the server: ${bootError}`} retry />;
+  if (booting) return <Splash message="Loading…" />;
   if (!session) return <Login />;
-  if (role === null) return null;
+  if (role === null) return <Splash message="Checking access…" />;
 
   if (role !== 'admin') {
     return (
@@ -98,6 +108,24 @@ export function App() {
       </div>
       {toast && <div className={`toast${toast.kind === 'error' ? ' error' : ''}`}>{toast.message}</div>}
     </ToastContext.Provider>
+  );
+}
+
+// A visible booting/loading/error state so the panel never shows a bare white
+// screen while auth resolves.
+function Splash({ message, retry }: { message: string; retry?: boolean }) {
+  return (
+    <div className="login-wrap">
+      <div className="login">
+        <Brand />
+        <div className={retry ? 'error-box' : 'muted'} style={{ textAlign: 'center' }}>{message}</div>
+        {retry && (
+          <button className="btn ghost" onClick={() => location.reload()}>
+            Retry
+          </button>
+        )}
+      </div>
+    </div>
   );
 }
 
