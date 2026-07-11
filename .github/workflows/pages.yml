@@ -35,6 +35,8 @@ jobs:
           VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true # auto-enable Pages (Actions source) on first run
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
