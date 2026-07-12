@@ -148,6 +148,28 @@ td select, td input { padding: 6px 8px; border-radius: 8px; font-size: 13px; }
 .item-row { display: grid; grid-template-columns: 2fr 1fr 90px 34px; gap: 8px; margin-top: 8px; }
 .icon-btn { border: 0; background: var(--red-tint); color: var(--red); border-radius: 8px; font-weight: 800; }
 
+/* Chats oversight page */
+.chat-preview {
+  max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.chat-modal { display: flex; flex-direction: column; overflow-y: hidden; }
+.chat-scroll {
+  flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px;
+  background: #fafbfe; border: 1px solid var(--hairline); border-radius: 14px; padding: 14px;
+  min-height: 200px;
+}
+.chat-bubble-row { display: flex; justify-content: flex-start; }
+.chat-bubble-row.coach { justify-content: flex-end; }
+.chat-bubble {
+  max-width: 78%; background: var(--white); border: 1px solid var(--hairline);
+  border-radius: 14px 14px 14px 4px; padding: 9px 12px; font-size: 13.5px;
+  white-space: pre-wrap; word-break: break-word;
+}
+.chat-bubble.coach {
+  background: #eef3ff; border-color: #dbe5ff; border-radius: 14px 14px 4px 14px;
+}
+.chat-meta { font-size: 10.5px; color: var(--mist, #8a90a8); margin-bottom: 3px; font-weight: 700; }
+
 @media (max-width: 720px) {
   .shell { padding: 14px 10px 60px; }
   table { display: block; overflow-x: auto; white-space: nowrap; }

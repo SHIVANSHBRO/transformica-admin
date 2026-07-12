@@ -8,12 +8,13 @@ import { WorkoutPlans } from './pages/WorkoutPlans';
 import { DietPlans } from './pages/DietPlans';
 import { Content } from './pages/Content';
 import { Challenges } from './pages/Challenges';
+import { Chats } from './pages/Chats';
 
 type ToastFn = (message: string, kind?: 'ok' | 'error') => void;
 const ToastContext = createContext<ToastFn>(() => {});
 export const useToast = () => useContext(ToastContext);
 
-const TABS = ['Overview', 'Members', 'Coaches', 'Workout plans', 'Diet plans', 'Content', 'Challenges'] as const;
+const TABS = ['Overview', 'Members', 'Coaches', 'Chats', 'Workout plans', 'Diet plans', 'Content', 'Challenges'] as const;
 type Tab = (typeof TABS)[number];
 
 export function App() {
@@ -101,6 +102,7 @@ export function App() {
         {tab === 'Overview' && <Overview />}
         {tab === 'Members' && <Members />}
         {tab === 'Coaches' && <Coaches />}
+        {tab === 'Chats' && <Chats />}
         {tab === 'Workout plans' && <WorkoutPlans />}
         {tab === 'Diet plans' && <DietPlans />}
         {tab === 'Content' && <Content />}
