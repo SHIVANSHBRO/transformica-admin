@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../supabase';
 import { useToast } from '../App';
-import { Banner, Exercise, Recipe, Video, youtubeIdFrom } from '../types';
+import { Banner, Exercise, Recipe, Story, Video, youtubeIdFrom } from '../types';
 import { Upload } from '../components/Upload';
 
 // In-app destinations a banner can deep-link to (RootNavigator route names).
@@ -28,10 +28,180 @@ export function Content() {
   return (
     <>
       <Banners />
+      <Stories />
       <Recipes />
       <Videos />
       <Exercises />
     </>
+  );
+}
+
+/* ---------------- Transformation stories ---------------- */
+
+const emptyStory = { name: '', age: '', headline: '', quote: '', beforeUrl: '', afterUrl: '', weeks: '' };
+
+function Stories() {
+  const toast = useToast();
+  const [stories, setStories] = useState<Story[]>([]);
+  const [show, setShow] = useState(false);
+  const [editing, setEditing] = useState<Story | null>(null);
+  const [form, setForm] = useState(emptyStory);
+
+  const set = (key: keyof typeof emptyStory) => (value: string) => setForm((f) => ({ ...f, [key]: value }));
+
+  const load = useCallback(async () => {
+    const { data } = await supabase.from('transformation_stories').select('*').order('sort_order').order('created_at');
+    setStories((data as Story[]) ?? []);
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  function openNew() {
+    setEditing(null);
+    setForm(emptyStory);
+    setShow(true);
+  }
+
+  function openEdit(s: Story) {
+    setEditing(s);
+    setForm({
+      name: s.name,
+      age: s.age != null ? String(s.age) : '',
+      headline: s.headline,
+      quote: s.quote ?? '',
+      beforeUrl: s.before_url,
+      afterUrl: s.after_url,
+      weeks: s.duration_weeks != null ? String(s.duration_weeks) : '',
+    });
+    setShow(true);
+  }
+
+  async function save() {
+    if (!form.name.trim()) return toast('Story needs the member’s first name', 'error');
+    if (!form.headline.trim()) return toast('Headline is the hook — e.g. “Lost 18 kg in 6 months”', 'error');
+    if (!form.beforeUrl.trim() || !form.afterUrl.trim()) return toast('Both before and after photos are required', 'error');
+    const row = {
+      name: form.name.trim(),
+      age: form.age.trim() === '' ? null : Number(form.age),
+      headline: form.headline.trim(),
+      quote: form.quote.trim() || null,
+      before_url: form.beforeUrl.trim(),
+      after_url: form.afterUrl.trim(),
+      duration_weeks: form.weeks.trim() === '' ? null : Number(form.weeks),
+    };
+    const { error } = editing
+      ? await supabase.from('transformation_stories').update(row).eq('id', editing.id)
+      : await supabase.from('transformation_stories').insert({ ...row, sort_order: stories.length });
+    if (error) return toast(error.message, 'error');
+    toast(editing ? 'Story updated' : 'Story published to the paywall');
+    setForm(emptyStory);
+    setEditing(null);
+    setShow(false);
+    await load();
+  }
+
+  async function toggleActive(s: Story) {
+    const { error } = await supabase.from('transformation_stories').update({ active: !s.active }).eq('id', s.id);
+    if (error) return toast(error.message, 'error');
+    await load();
+  }
+
+  async function move(index: number, dir: -1 | 1) {
+    const other = index + dir;
+    if (other < 0 || other >= stories.length) return;
+    const a = stories[index];
+    const b = stories[other];
+    await Promise.all([
+      supabase.from('transformation_stories').update({ sort_order: other }).eq('id', a.id),
+      supabase.from('transformation_stories').update({ sort_order: index }).eq('id', b.id),
+    ]);
+    await load();
+  }
+
+  async function remove(s: Story) {
+    if (!window.confirm(`Delete ${s.name}'s story?`)) return;
+    const { error } = await supabase.from('transformation_stories').delete().eq('id', s.id);
+    if (error) return toast(error.message, 'error');
+    toast('Story deleted');
+    await load();
+  }
+
+  return (
+    <div className="card">
+      <div className="row">
+        <h2 style={{ margin: 0 }}>Transformation stories</h2>
+        <span className="muted">before/after social proof on the Plans screen — only members who consented in writing</span>
+        <div className="spacer" />
+        <button className="btn" onClick={() => (show ? setShow(false) : openNew())}>{show ? 'Close' : '+ New story'}</button>
+      </div>
+
+      {show && (
+        <div style={{ marginTop: 14 }}>
+          <div className="row">
+            <label className="field">First name<input className="inline" style={{ width: 130 }} value={form.name} onChange={(e) => set('name')(e.target.value)} placeholder="Rohit" /></label>
+            <label className="field">Age (optional)<input className="inline" style={{ width: 90 }} type="number" min={18} max={100} value={form.age} onChange={(e) => set('age')(e.target.value)} placeholder="34" /></label>
+            <label className="field grow">Headline — the result<input value={form.headline} onChange={(e) => set('headline')(e.target.value)} placeholder="Lost 18 kg in 6 months" /></label>
+            <label className="field">Weeks (optional)<input className="inline" style={{ width: 90 }} type="number" min={1} value={form.weeks} onChange={(e) => set('weeks')(e.target.value)} placeholder="24" /></label>
+          </div>
+          <div className="row" style={{ marginTop: 10 }}>
+            <label className="field grow">
+              Before photo
+              <div className="row" style={{ marginTop: 5 }}>
+                <input className="grow" value={form.beforeUrl} onChange={(e) => set('beforeUrl')(e.target.value)} placeholder="upload →" />
+                <Upload folder="stories" accept="image/*" onUploaded={set('beforeUrl')} />
+              </div>
+            </label>
+            <label className="field grow">
+              After photo
+              <div className="row" style={{ marginTop: 5 }}>
+                <input className="grow" value={form.afterUrl} onChange={(e) => set('afterUrl')(e.target.value)} placeholder="upload →" />
+                <Upload folder="stories" accept="image/*" onUploaded={set('afterUrl')} />
+              </div>
+            </label>
+          </div>
+          {(form.beforeUrl || form.afterUrl) && (
+            <div className="row" style={{ marginTop: 8 }}>
+              {form.beforeUrl && <img src={form.beforeUrl} alt="before" style={{ height: 84, borderRadius: 9, border: '1px solid var(--hairline)' }} />}
+              {form.afterUrl && <img src={form.afterUrl} alt="after" style={{ height: 84, borderRadius: 9, border: '1px solid var(--hairline)' }} />}
+            </div>
+          )}
+          <label className="field" style={{ marginTop: 10 }}>
+            Quote — in the member’s own words (optional)
+            <textarea rows={2} value={form.quote} onChange={(e) => set('quote')(e.target.value)} placeholder="My coach checked in every single week. I never felt alone in this." />
+          </label>
+          <div className="row" style={{ marginTop: 10 }}>
+            <div className="spacer" />
+            <button className="btn" onClick={save}>{editing ? 'Save changes' : 'Publish story'}</button>
+          </div>
+        </div>
+      )}
+
+      <table style={{ marginTop: 12 }}>
+        <tbody>
+          {stories.map((s, i) => (
+            <tr key={s.id}>
+              <td>
+                <img src={s.before_url} alt="" style={{ width: 34, height: 46, objectFit: 'cover', borderRadius: 7, verticalAlign: 'middle', marginRight: 4, border: '1px solid var(--hairline)' }} />
+                <img src={s.after_url} alt="" style={{ width: 34, height: 46, objectFit: 'cover', borderRadius: 7, verticalAlign: 'middle', marginRight: 10, border: '1px solid var(--hairline)' }} />
+                <strong>{s.name}</strong>{s.age != null ? <span className="muted">, {s.age}</span> : null}
+                <div className="muted">{s.headline}{s.duration_weeks ? ` · ${s.duration_weeks} weeks` : ''}</div>
+              </td>
+              <td>{s.active ? <span className="badge ok">live</span> : <span className="badge dim">hidden</span>}</td>
+              <td className="row" style={{ justifyContent: 'flex-end' }}>
+                <button className="btn ghost small" onClick={() => move(i, -1)} disabled={i === 0}>↑</button>
+                <button className="btn ghost small" onClick={() => move(i, 1)} disabled={i === stories.length - 1}>↓</button>
+                <button className="btn ghost small" onClick={() => toggleActive(s)}>{s.active ? 'Hide' : 'Show'}</button>
+                <button className="btn ghost small" onClick={() => openEdit(s)}>Edit</button>
+                <button className="btn danger small" onClick={() => remove(s)}>Delete</button>
+              </td>
+            </tr>
+          ))}
+          {stories.length === 0 && <tr><td className="muted">No stories yet — collect written consent, then publish your first transformation.</td></tr>}
+        </tbody>
+      </table>
+    </div>
   );
 }
 

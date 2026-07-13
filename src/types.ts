@@ -127,6 +127,20 @@ export type Recipe = {
   created_at: string;
 };
 
+export type Story = {
+  id: string;
+  name: string;
+  age: number | null;
+  headline: string;
+  quote: string | null;
+  before_url: string;
+  after_url: string;
+  duration_weeks: number | null;
+  active: boolean;
+  sort_order: number;
+  created_at: string;
+};
+
 export type WorkoutPlan = {
   id: string;
   client_id: string;
