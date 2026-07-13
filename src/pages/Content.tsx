@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../supabase';
 import { useToast } from '../App';
-import { Banner, Exercise, Video, youtubeIdFrom } from '../types';
+import { Banner, Exercise, Recipe, Video, youtubeIdFrom } from '../types';
 import { Upload } from '../components/Upload';
 
 // In-app destinations a banner can deep-link to (RootNavigator route names).
@@ -28,9 +28,168 @@ export function Content() {
   return (
     <>
       <Banners />
+      <Recipes />
       <Videos />
       <Exercises />
     </>
+  );
+}
+
+/* ---------------- Recipes (Recipe of the week) ---------------- */
+
+const emptyRecipe = { name: '', kcal: '', protein: '', carbs: '', fat: '', tag: '', instructions: '', imageUrl: '' };
+
+function Recipes() {
+  const toast = useToast();
+  const [recipes, setRecipes] = useState<Recipe[]>([]);
+  const [show, setShow] = useState(false);
+  const [editing, setEditing] = useState<Recipe | null>(null);
+  const [form, setForm] = useState(emptyRecipe);
+
+  const set = (key: keyof typeof emptyRecipe) => (value: string) => setForm((f) => ({ ...f, [key]: value }));
+
+  const load = useCallback(async () => {
+    const { data } = await supabase
+      .from('recipes')
+      .select('*')
+      .order('featured', { ascending: false })
+      .order('name');
+    setRecipes((data as Recipe[]) ?? []);
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  function openNew() {
+    setEditing(null);
+    setForm(emptyRecipe);
+    setShow(true);
+  }
+
+  function openEdit(r: Recipe) {
+    setEditing(r);
+    setForm({
+      name: r.name,
+      kcal: String(r.kcal),
+      protein: String(r.protein_g),
+      carbs: r.carbs_g != null ? String(r.carbs_g) : '',
+      fat: r.fat_g != null ? String(r.fat_g) : '',
+      tag: r.tag ?? '',
+      instructions: r.instructions ?? '',
+      imageUrl: r.image_url ?? '',
+    });
+    setShow(true);
+  }
+
+  async function save() {
+    const kcal = Number(form.kcal);
+    const protein = Number(form.protein);
+    if (!form.name.trim()) return toast('Recipe needs a name', 'error');
+    if (!Number.isFinite(kcal) || kcal <= 0) return toast('Calories must be a positive number', 'error');
+    if (!Number.isFinite(protein) || protein < 0) return toast('Protein must be a number (grams)', 'error');
+    const row = {
+      name: form.name.trim(),
+      kcal,
+      protein_g: protein,
+      carbs_g: form.carbs.trim() === '' ? null : Number(form.carbs),
+      fat_g: form.fat.trim() === '' ? null : Number(form.fat),
+      tag: form.tag.trim() || null,
+      instructions: form.instructions.trim() || null,
+      image_url: form.imageUrl.trim() || null,
+    };
+    const { error } = editing
+      ? await supabase.from('recipes').update(row).eq('id', editing.id)
+      : await supabase.from('recipes').insert(row);
+    if (error) return toast(error.message, 'error');
+    toast(editing ? 'Recipe updated' : 'Recipe added');
+    setForm(emptyRecipe);
+    setEditing(null);
+    setShow(false);
+    await load();
+  }
+
+  async function toggleFeatured(r: Recipe) {
+    const { error } = await supabase.from('recipes').update({ featured: !r.featured }).eq('id', r.id);
+    if (error) return toast(error.message, 'error');
+    toast(r.featured ? 'Removed from Recipe of the week' : 'Now showing in Recipe of the week');
+    await load();
+  }
+
+  async function remove(r: Recipe) {
+    if (!window.confirm(`Delete recipe "${r.name}"?`)) return;
+    const { error } = await supabase.from('recipes').delete().eq('id', r.id);
+    if (error) return toast(error.message, 'error');
+    toast('Recipe deleted');
+    await load();
+  }
+
+  const featuredCount = recipes.filter((r) => r.featured).length;
+
+  return (
+    <div className="card">
+      <div className="row">
+        <h2 style={{ margin: 0 }}>Recipe of the week</h2>
+        <span className="muted">{featuredCount} featured — ★ recipes show on the member home screen</span>
+        <div className="spacer" />
+        <button className="btn" onClick={() => (show ? setShow(false) : openNew())}>{show ? 'Close' : '+ New recipe'}</button>
+      </div>
+
+      {show && (
+        <div style={{ marginTop: 14 }}>
+          <div className="row">
+            <label className="field grow">Name<input value={form.name} onChange={(e) => set('name')(e.target.value)} placeholder="Paneer bhurji protein bowl" /></label>
+            <label className="field">Tag (optional)<input className="inline" style={{ width: 130 }} value={form.tag} onChange={(e) => set('tag')(e.target.value)} placeholder="High protein" /></label>
+          </div>
+          <div className="row" style={{ marginTop: 10 }}>
+            <label className="field">Calories<input className="inline" style={{ width: 90 }} type="number" min={1} value={form.kcal} onChange={(e) => set('kcal')(e.target.value)} placeholder="420" /></label>
+            <label className="field">Protein (g)<input className="inline" style={{ width: 90 }} type="number" min={0} value={form.protein} onChange={(e) => set('protein')(e.target.value)} placeholder="32" /></label>
+            <label className="field">Carbs (g, optional)<input className="inline" style={{ width: 110 }} type="number" min={0} value={form.carbs} onChange={(e) => set('carbs')(e.target.value)} placeholder="28" /></label>
+            <label className="field">Fat (g, optional)<input className="inline" style={{ width: 100 }} type="number" min={0} value={form.fat} onChange={(e) => set('fat')(e.target.value)} placeholder="18" /></label>
+            <label className="field grow">
+              Photo (optional)
+              <div className="row" style={{ marginTop: 5 }}>
+                <input className="grow" value={form.imageUrl} onChange={(e) => set('imageUrl')(e.target.value)} placeholder="https://…/dish.jpg or upload →" />
+                <Upload folder="recipes" accept="image/*" onUploaded={set('imageUrl')} />
+                {form.imageUrl && <button type="button" className="btn ghost small" onClick={() => set('imageUrl')('')}>Clear</button>}
+              </div>
+            </label>
+          </div>
+          {form.imageUrl && <img src={form.imageUrl} alt="" style={{ height: 64, borderRadius: 9, marginTop: 8, border: '1px solid var(--hairline)' }} />}
+          <label className="field" style={{ marginTop: 10 }}>
+            Recipe — one step per line
+            <textarea rows={5} value={form.instructions} onChange={(e) => set('instructions')(e.target.value)} placeholder={'Crumble 150 g paneer…\nSauté onion, tomato & spices…\nServe with 2 phulkas.'} />
+          </label>
+          <div className="row" style={{ marginTop: 10 }}>
+            <div className="spacer" />
+            <button className="btn" onClick={save}>{editing ? 'Save changes' : 'Add recipe'}</button>
+          </div>
+        </div>
+      )}
+
+      <table style={{ marginTop: 12 }}>
+        <tbody>
+          {recipes.map((r) => (
+            <tr key={r.id}>
+              <td>
+                {r.image_url
+                  ? <img src={r.image_url} alt="" style={{ width: 42, height: 42, objectFit: 'cover', borderRadius: 9, verticalAlign: 'middle', marginRight: 10, border: '1px solid var(--hairline)' }} />
+                  : <span style={{ display: 'inline-block', width: 42, height: 42, borderRadius: 9, verticalAlign: 'middle', marginRight: 10, background: 'linear-gradient(120deg, #17C07A, #4DD8A8)' }} />}
+                <strong>{r.name}</strong>
+                <div className="muted">{r.kcal} kcal · {r.protein_g} g protein{r.tag ? ` · ${r.tag}` : ''}</div>
+              </td>
+              <td>{r.featured ? <span className="badge ok">★ featured</span> : <span className="badge dim">library only</span>}</td>
+              <td className="row" style={{ justifyContent: 'flex-end' }}>
+                <button className="btn ghost small" onClick={() => toggleFeatured(r)}>{r.featured ? 'Unfeature' : '★ Feature'}</button>
+                <button className="btn ghost small" onClick={() => openEdit(r)}>Edit</button>
+                <button className="btn danger small" onClick={() => remove(r)}>Delete</button>
+              </td>
+            </tr>
+          ))}
+          {recipes.length === 0 && <tr><td className="muted">No recipes yet — add one above and ★ feature it.</td></tr>}
+        </tbody>
+      </table>
+    </div>
   );
 }
 

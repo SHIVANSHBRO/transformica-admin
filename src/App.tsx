@@ -9,12 +9,13 @@ import { DietPlans } from './pages/DietPlans';
 import { Content } from './pages/Content';
 import { Challenges } from './pages/Challenges';
 import { Chats } from './pages/Chats';
+import { Store } from './pages/Store';
 
 type ToastFn = (message: string, kind?: 'ok' | 'error') => void;
 const ToastContext = createContext<ToastFn>(() => {});
 export const useToast = () => useContext(ToastContext);
 
-const TABS = ['Overview', 'Members', 'Coaches', 'Chats', 'Workout plans', 'Diet plans', 'Content', 'Challenges'] as const;
+const TABS = ['Overview', 'Members', 'Coaches', 'Chats', 'Workout plans', 'Diet plans', 'Content', 'Store', 'Challenges'] as const;
 type Tab = (typeof TABS)[number];
 
 export function App() {
@@ -106,6 +107,7 @@ export function App() {
         {tab === 'Workout plans' && <WorkoutPlans />}
         {tab === 'Diet plans' && <DietPlans />}
         {tab === 'Content' && <Content />}
+        {tab === 'Store' && <Store />}
         {tab === 'Challenges' && <Challenges />}
       </div>
       {toast && <div className={`toast${toast.kind === 'error' ? ' error' : ''}`}>{toast.message}</div>}

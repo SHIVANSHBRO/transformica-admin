@@ -99,6 +99,34 @@ export function youtubeIdFrom(url: string): string | null {
   return m ? m[1] : null;
 }
 
+export type Supplement = {
+  id: string;
+  name: string;
+  brand: string;
+  origin: string | null;
+  description: string | null;
+  price_inr: number;
+  category: string;
+  rating: number | null;
+  in_stock: boolean;
+  image_url: string | null;
+  created_at: string;
+};
+
+export type Recipe = {
+  id: string;
+  name: string;
+  kcal: number;
+  protein_g: number;
+  carbs_g: number | null;
+  fat_g: number | null;
+  tag: string | null;
+  instructions: string | null;
+  image_url: string | null;
+  featured: boolean;
+  created_at: string;
+};
+
 export type WorkoutPlan = {
   id: string;
   client_id: string;
