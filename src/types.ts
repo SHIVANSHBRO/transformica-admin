@@ -4,7 +4,7 @@ export type Profile = {
   first_name: string;
   last_name: string | null;
   phone: string | null;
-  plan: 'free' | 'pro' | 'pro_max';
+  plan: 'free' | 'lite' | 'pro' | 'pro_max';
   plan_expires_at: string | null;
   daily_kcal_target: number | null;
   daily_protein_target: number | null;
@@ -199,8 +199,18 @@ export type DietTemplate = {
 
 export const PLAN_LABELS: Record<Profile['plan'], string> = {
   free: 'Free',
+  lite: 'Lite',
   pro: 'Pro',
   pro_max: 'Pro Max',
+};
+
+export type FeedbackRow = {
+  id: string;
+  user_id: string;
+  kind: 'general' | 'weekly';
+  message: string | null;
+  answers: Record<string, string> | null;
+  created_at: string;
 };
 
 export function displayName(p: Pick<Profile, 'first_name' | 'last_name'>) {
