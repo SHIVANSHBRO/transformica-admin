@@ -81,6 +81,7 @@ button { font: inherit; cursor: pointer; }
 }
 .btn:disabled { opacity: 0.55; cursor: default; }
 .btn.ghost { background: var(--white); color: var(--blue); border: 1px solid var(--hairline); }
+.btn.ghost.active { background: var(--blue); color: #fff; border-color: var(--blue); }
 .btn.danger { background: var(--red-tint); color: var(--red); }
 .btn.small { padding: 6px 11px; font-size: 12px; border-radius: 9px; }
 

@@ -4,9 +4,24 @@ import { useToast } from '../App';
 import { MemberPicker } from '../components/MemberPicker';
 import { Exercise, Profile, WorkoutPlan, WorkoutTemplate, WorkoutTemplateExercise, displayName } from '../types';
 
-type DraftExercise = { exercise_id: string; sets: string; reps: string; weight: string; tut: string; rest: string };
+type DraftExercise = {
+  exercise_id: string;
+  sets: string;
+  reps: string;
+  weight: string;
+  perSet: boolean; // true → one weight per set (setWeights), false → uniform `weight`
+  setWeights: string[];
+  tut: string;
+  rest: string;
+};
 
-const emptyRow = (): DraftExercise => ({ exercise_id: '', sets: '3', reps: '8-12', weight: '', tut: '40', rest: '90' });
+const emptyRow = (): DraftExercise => ({ exercise_id: '', sets: '3', reps: '8-12', weight: '', perSet: false, setWeights: [], tut: '40', rest: '90' });
+
+// Keep the per-set weights array the same length as the sets count, seeding
+// new slots from the uniform weight so toggling feels continuous.
+function sizedWeights(r: DraftExercise, sets: number): string[] {
+  return Array.from({ length: Math.max(1, sets) }, (_, i) => r.setWeights[i] ?? r.weight ?? '');
+}
 
 // "8-12" -> 12; matches the app's progressive-overload seeding.
 function parseRepTarget(reps: string): number | null {
@@ -33,7 +48,7 @@ export function WorkoutPlans() {
 
   // Expandable template preview
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [preview, setPreview] = useState<{ name: string; muscle_group: string; sets: number; reps: string; weight: number | null }[]>([]);
+  const [preview, setPreview] = useState<{ name: string; muscle_group: string; sets: number; reps: string; weight: string | null }[]>([]);
 
   async function togglePreview(id: string) {
     if (expandedId === id) {
@@ -42,16 +57,20 @@ export function WorkoutPlans() {
     }
     const { data } = await supabase
       .from('workout_plan_template_exercises')
-      .select('sets, reps, target_weight_kg, exercise:exercises(name, muscle_group)')
+      .select('sets, reps, target_weight_kg, set_weights_kg, exercise:exercises(name, muscle_group)')
       .eq('template_id', id)
       .order('order_index');
     setPreview(
-      ((data as unknown as { sets: number; reps: string; target_weight_kg: number | null; exercise: { name: string; muscle_group: string } }[]) ?? []).map((r) => ({
+      ((data as unknown as { sets: number; reps: string; target_weight_kg: number | null; set_weights_kg: (number | null)[] | null; exercise: { name: string; muscle_group: string } }[]) ?? []).map((r) => ({
         name: r.exercise?.name ?? '?',
         muscle_group: r.exercise?.muscle_group ?? '',
         sets: r.sets,
         reps: r.reps,
-        weight: r.target_weight_kg,
+        weight: r.set_weights_kg?.length
+          ? r.set_weights_kg.map((w) => (w == null ? '—' : String(w))).join('/')
+          : r.target_weight_kg != null
+            ? String(r.target_weight_kg)
+            : null,
       }))
     );
     setExpandedId(id);
@@ -105,16 +124,25 @@ export function WorkoutPlans() {
       return;
     }
     const { error: exErr } = await supabase.from('workout_plan_template_exercises').insert(
-      chosen.map((r, i) => ({
-        template_id: tpl.id,
-        exercise_id: r.exercise_id,
-        sets: parseInt(r.sets, 10) || 3,
-        reps: r.reps || '8-12',
-        target_weight_kg: r.weight ? parseFloat(r.weight) : null,
-        time_under_tension_sec: parseInt(r.tut, 10) || 40,
-        rest_seconds: parseInt(r.rest, 10) || null,
-        order_index: i,
-      }))
+      chosen.map((r, i) => {
+        const sets = parseInt(r.sets, 10) || 3;
+        // Per-set mode → jsonb array (null for blank sets); uniform target
+        // stays filled with the first weight so progressive overload and older
+        // app builds keep something sensible to work from.
+        const perSetWeights = r.perSet ? sizedWeights(r, sets).map((w) => (w.trim() ? parseFloat(w) : null)) : null;
+        const hasPerSet = perSetWeights != null && perSetWeights.some((w) => w != null);
+        return {
+          template_id: tpl.id,
+          exercise_id: r.exercise_id,
+          sets,
+          reps: r.reps || '8-12',
+          target_weight_kg: hasPerSet ? perSetWeights!.find((w) => w != null) ?? null : r.weight ? parseFloat(r.weight) : null,
+          set_weights_kg: hasPerSet ? perSetWeights : null,
+          time_under_tension_sec: parseInt(r.tut, 10) || 40,
+          rest_seconds: parseInt(r.rest, 10) || null,
+          order_index: i,
+        };
+      })
     );
     setSavingTpl(false);
     if (exErr) return toast(exErr.message, 'error');
@@ -166,7 +194,7 @@ export function WorkoutPlans() {
     const dayOfWeek = new Date().getDay();
     const { error: exErr } = await supabase.from('workout_plan_exercises').insert(
       plans.flatMap((p) =>
-        (tplExercises as WorkoutTemplateExercise[]).map((e) => ({
+        (tplExercises as (WorkoutTemplateExercise & { set_weights_kg: (number | null)[] | null })[]).map((e) => ({
           plan_id: p.id,
           exercise_id: e.exercise_id,
           day_of_week: dayOfWeek,
@@ -174,6 +202,7 @@ export function WorkoutPlans() {
           reps: e.reps,
           rep_target: parseRepTarget(e.reps),
           target_weight_kg: e.target_weight_kg,
+          set_weights_kg: e.set_weights_kg ?? null,
           time_under_tension_sec: e.time_under_tension_sec ?? 40,
           rest_seconds: e.rest_seconds,
           order_index: e.order_index,
@@ -214,7 +243,8 @@ export function WorkoutPlans() {
             </label>
             <div style={{ marginTop: 12 }}>
               {rows.map((r, i) => (
-                <div className="row" key={i} style={{ marginBottom: 8 }}>
+                <React.Fragment key={i}>
+                <div className="row" style={{ marginBottom: 8 }}>
                   <select
                     className="grow"
                     value={r.exercise_id}
@@ -226,17 +256,53 @@ export function WorkoutPlans() {
                     ))}
                   </select>
                   <input className="inline" style={{ width: 70 }} placeholder="sets" value={r.sets}
-                    onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, sets: e.target.value } : x)))} />
+                    onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, sets: e.target.value, setWeights: x.perSet ? sizedWeights({ ...x, sets: e.target.value }, parseInt(e.target.value, 10) || 3) : x.setWeights } : x)))} />
                   <input className="inline" style={{ width: 90 }} placeholder="reps (8-12)" value={r.reps}
                     onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, reps: e.target.value } : x)))} />
-                  <input className="inline" style={{ width: 90 }} placeholder="kg (opt.)" value={r.weight}
-                    onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, weight: e.target.value } : x)))} />
+                  {!r.perSet && (
+                    <input className="inline" style={{ width: 90 }} placeholder="kg (opt.)" value={r.weight}
+                      onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, weight: e.target.value } : x)))} />
+                  )}
+                  <button
+                    className={`btn ghost small${r.perSet ? ' active' : ''}`}
+                    title={r.perSet ? 'Back to one weight for every set' : 'Set a different weight for each set (e.g. 40/50/60)'}
+                    onClick={() =>
+                      setRows(rows.map((x, j) =>
+                        j === i ? { ...x, perSet: !x.perSet, setWeights: !x.perSet ? sizedWeights(x, parseInt(x.sets, 10) || 3) : x.setWeights } : x
+                      ))
+                    }
+                  >
+                    {r.perSet ? 'same kg' : 'kg / set'}
+                  </button>
                   <input className="inline" style={{ width: 78 }} placeholder="TUT s" title="Time under tension (seconds)" value={r.tut}
                     onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, tut: e.target.value } : x)))} />
                   <input className="inline" style={{ width: 78 }} placeholder="rest s" title="Rest between sets (seconds)" value={r.rest}
                     onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, rest: e.target.value } : x)))} />
                   <button className="icon-btn" style={{ width: 34, height: 34 }} onClick={() => setRows(rows.filter((_, j) => j !== i))} title="Remove row">✕</button>
                 </div>
+                {r.perSet && (
+                  <div className="row" style={{ marginBottom: 8, marginTop: -2, paddingLeft: 12, flexWrap: 'wrap' }}>
+                    <span className="muted" style={{ fontSize: 12 }}>weight per set (kg):</span>
+                    {sizedWeights(r, parseInt(r.sets, 10) || 3).map((w, k) => (
+                      <input
+                        key={k}
+                        className="inline"
+                        style={{ width: 64 }}
+                        placeholder={`set ${k + 1}`}
+                        value={w}
+                        onChange={(e) =>
+                          setRows(rows.map((x, j) => {
+                            if (j !== i) return x;
+                            const next = sizedWeights(x, parseInt(x.sets, 10) || 3);
+                            next[k] = e.target.value;
+                            return { ...x, setWeights: next };
+                          }))
+                        }
+                      />
+                    ))}
+                  </div>
+                )}
+                </React.Fragment>
               ))}
               <div className="row" style={{ marginTop: 10 }}>
                 <button className="btn ghost small" onClick={() => setRows([...rows, emptyRow()])}>+ Add exercise</button>

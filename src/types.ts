@@ -180,6 +180,7 @@ export type WorkoutTemplateExercise = {
   sets: number;
   reps: string;
   target_weight_kg: number | null;
+  set_weights_kg: (number | null)[] | null;
   time_under_tension_sec: number | null;
   rest_seconds: number | null;
   order_index: number;
