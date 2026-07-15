@@ -4,6 +4,8 @@ export type Profile = {
   first_name: string;
   last_name: string | null;
   phone: string | null;
+  avatar_url: string | null;
+  bio: string | null;
   plan: 'free' | 'lite' | 'pro' | 'pro_max';
   plan_expires_at: string | null;
   daily_kcal_target: number | null;
