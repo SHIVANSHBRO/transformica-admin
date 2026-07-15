@@ -72,7 +72,7 @@ function Stories() {
       headline: s.headline,
       quote: s.quote ?? '',
       beforeUrl: s.before_url,
-      afterUrl: s.after_url,
+      afterUrl: s.after_url ?? '',
       weeks: s.duration_weeks != null ? String(s.duration_weeks) : '',
     });
     setShow(true);
@@ -81,14 +81,14 @@ function Stories() {
   async function save() {
     if (!form.name.trim()) return toast('Story needs the member’s first name', 'error');
     if (!form.headline.trim()) return toast('Headline is the hook — e.g. “Lost 18 kg in 6 months”', 'error');
-    if (!form.beforeUrl.trim() || !form.afterUrl.trim()) return toast('Both before and after photos are required', 'error');
+    if (!form.beforeUrl.trim()) return toast('A transformation photo is required', 'error');
     const row = {
       name: form.name.trim(),
       age: form.age.trim() === '' ? null : Number(form.age),
       headline: form.headline.trim(),
       quote: form.quote.trim() || null,
       before_url: form.beforeUrl.trim(),
-      after_url: form.afterUrl.trim(),
+      after_url: form.afterUrl.trim() || null,
       duration_weeks: form.weeks.trim() === '' ? null : Number(form.weeks),
     };
     const { error } = editing
@@ -132,7 +132,7 @@ function Stories() {
     <div className="card">
       <div className="row">
         <h2 style={{ margin: 0 }}>Transformation stories</h2>
-        <span className="muted">before/after social proof on the Plans screen — only members who consented in writing</span>
+        <span className="muted">“Our transformations” on Home + the Plans screen · one photo or a before/after pair · only members who consented in writing</span>
         <div className="spacer" />
         <button className="btn" onClick={() => (show ? setShow(false) : openNew())}>{show ? 'Close' : '+ New story'}</button>
       </div>
@@ -147,17 +147,19 @@ function Stories() {
           </div>
           <div className="row" style={{ marginTop: 10 }}>
             <label className="field grow">
-              Before photo
+              Photo <span className="muted">(shown in “Our transformations”)</span>
               <div className="row" style={{ marginTop: 5 }}>
                 <input className="grow" value={form.beforeUrl} onChange={(e) => set('beforeUrl')(e.target.value)} placeholder="upload →" />
                 <Upload folder="stories" accept="image/*" onUploaded={set('beforeUrl')} />
+                {form.beforeUrl && <button type="button" className="btn ghost small" onClick={() => set('beforeUrl')('')}>Clear</button>}
               </div>
             </label>
             <label className="field grow">
-              After photo
+              After photo <span className="muted">(optional — makes it a before → after)</span>
               <div className="row" style={{ marginTop: 5 }}>
-                <input className="grow" value={form.afterUrl} onChange={(e) => set('afterUrl')(e.target.value)} placeholder="upload →" />
+                <input className="grow" value={form.afterUrl} onChange={(e) => set('afterUrl')(e.target.value)} placeholder="leave blank for a single image" />
                 <Upload folder="stories" accept="image/*" onUploaded={set('afterUrl')} />
+                {form.afterUrl && <button type="button" className="btn ghost small" onClick={() => set('afterUrl')('')}>Clear</button>}
               </div>
             </label>
           </div>
@@ -183,8 +185,8 @@ function Stories() {
           {stories.map((s, i) => (
             <tr key={s.id}>
               <td>
-                <img src={s.before_url} alt="" style={{ width: 34, height: 46, objectFit: 'cover', borderRadius: 7, verticalAlign: 'middle', marginRight: 4, border: '1px solid var(--hairline)' }} />
-                <img src={s.after_url} alt="" style={{ width: 34, height: 46, objectFit: 'cover', borderRadius: 7, verticalAlign: 'middle', marginRight: 10, border: '1px solid var(--hairline)' }} />
+                <img src={s.before_url} alt="" style={{ width: 34, height: 46, objectFit: 'cover', borderRadius: 7, verticalAlign: 'middle', marginRight: s.after_url ? 4 : 10, border: '1px solid var(--hairline)' }} />
+                {s.after_url && <img src={s.after_url} alt="" style={{ width: 34, height: 46, objectFit: 'cover', borderRadius: 7, verticalAlign: 'middle', marginRight: 10, border: '1px solid var(--hairline)' }} />}
                 <strong>{s.name}</strong>{s.age != null ? <span className="muted">, {s.age}</span> : null}
                 <div className="muted">{s.headline}{s.duration_weeks ? ` · ${s.duration_weeks} weeks` : ''}</div>
               </td>

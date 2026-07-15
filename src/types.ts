@@ -136,7 +136,7 @@ export type Story = {
   headline: string;
   quote: string | null;
   before_url: string;
-  after_url: string;
+  after_url: string | null;
   duration_weeks: number | null;
   active: boolean;
   sort_order: number;
