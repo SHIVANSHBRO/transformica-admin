@@ -39,7 +39,7 @@ export type Exercise = {
 export type Video = {
   id: string;
   title: string;
-  category: 'workout' | 'diet' | 'motivation';
+  category: 'tutorial' | 'workout' | 'diet' | 'motivation';
   youtube_url: string;
   description: string | null;
   published: boolean;

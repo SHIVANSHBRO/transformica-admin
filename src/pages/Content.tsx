@@ -21,7 +21,7 @@ const SCREENS = [
   { value: 'BodyMeasurements', label: 'Body measurements' },
 ];
 
-const VIDEO_CATEGORIES = ['workout', 'diet', 'motivation'] as const;
+const VIDEO_CATEGORIES = ['tutorial', 'workout', 'diet', 'motivation'] as const;
 const DIFFICULTIES = ['Beginner', 'Intermediate', 'Advanced'] as const;
 
 export function Content() {
