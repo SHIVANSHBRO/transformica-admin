@@ -209,7 +209,7 @@ function Stories() {
 
 /* ---------------- Recipes (Recipe of the week) ---------------- */
 
-const emptyRecipe = { name: '', kcal: '', protein: '', carbs: '', fat: '', tag: '', instructions: '', imageUrl: '' };
+const emptyRecipe = { name: '', kcal: '', protein: '', carbs: '', fat: '', tag: '', prep: '', servings: '', ingredients: '', instructions: '', imageUrl: '' };
 
 function Recipes() {
   const toast = useToast();
@@ -248,6 +248,9 @@ function Recipes() {
       carbs: r.carbs_g != null ? String(r.carbs_g) : '',
       fat: r.fat_g != null ? String(r.fat_g) : '',
       tag: r.tag ?? '',
+      prep: r.prep_time_min != null ? String(r.prep_time_min) : '',
+      servings: r.servings != null ? String(r.servings) : '',
+      ingredients: (r.ingredients ?? []).join('\n'),
       instructions: r.instructions ?? '',
       imageUrl: r.image_url ?? '',
     });
@@ -267,6 +270,12 @@ function Recipes() {
       carbs_g: form.carbs.trim() === '' ? null : Number(form.carbs),
       fat_g: form.fat.trim() === '' ? null : Number(form.fat),
       tag: form.tag.trim() || null,
+      prep_time_min: form.prep.trim() === '' ? null : Number(form.prep),
+      servings: form.servings.trim() === '' ? null : Number(form.servings),
+      ingredients: (() => {
+        const list = form.ingredients.split('\n').map((s) => s.trim()).filter(Boolean);
+        return list.length ? list : null;
+      })(),
       instructions: form.instructions.trim() || null,
       image_url: form.imageUrl.trim() || null,
     };
@@ -328,8 +337,17 @@ function Recipes() {
             </label>
           </div>
           {form.imageUrl && <img src={form.imageUrl} alt="" style={{ height: 64, borderRadius: 9, marginTop: 8, border: '1px solid var(--hairline)' }} />}
+          <div className="row" style={{ marginTop: 10 }}>
+            <label className="field">Prep + cook (min)<input className="inline" style={{ width: 120 }} type="number" min={0} value={form.prep} onChange={(e) => set('prep')(e.target.value)} placeholder="20" /></label>
+            <label className="field">Servings<input className="inline" style={{ width: 100 }} type="number" min={1} value={form.servings} onChange={(e) => set('servings')(e.target.value)} placeholder="2" /></label>
+            <span className="muted" style={{ alignSelf: 'flex-end', paddingBottom: 8 }}>Macros above are stated PER SERVING.</span>
+          </div>
           <label className="field" style={{ marginTop: 10 }}>
-            Recipe — one step per line
+            Ingredients — one per line
+            <textarea rows={5} value={form.ingredients} onChange={(e) => set('ingredients')(e.target.value)} placeholder={'150 g paneer, crumbled\n1 onion, finely chopped\n1 tomato, chopped\n2 phulkas'} />
+          </label>
+          <label className="field" style={{ marginTop: 10 }}>
+            Method — one step per line
             <textarea rows={5} value={form.instructions} onChange={(e) => set('instructions')(e.target.value)} placeholder={'Crumble 150 g paneer…\nSauté onion, tomato & spices…\nServe with 2 phulkas.'} />
           </label>
           <div className="row" style={{ marginTop: 10 }}>

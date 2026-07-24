@@ -126,6 +126,9 @@ export type Recipe = {
   instructions: string | null;
   image_url: string | null;
   featured: boolean;
+  ingredients: string[] | null;
+  prep_time_min: number | null;
+  servings: number | null;
   created_at: string;
 };
 
