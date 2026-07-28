@@ -2,9 +2,18 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '../supabase';
 import { Profile, displayName } from '../types';
 
-// Read-only oversight of every coach↔client conversation. Admin read access
-// comes from the coach_messages_select_admin RLS policy (migration 0040) —
-// no service key involved, the panel reads with the admin's own session.
+// Oversight of every coach↔client conversation, plus the ability to step in
+// and reply. Read access comes from coach_messages_select_admin (0040) and
+// write from coach_messages_insert_admin (0068) — no service key involved,
+// the panel works with the admin's own session throughout.
+//
+// ⚠️ Replies are sent AS THE COACH: sender_id is the coach's id and nothing
+// records that an admin wrote it, so the client sees an ordinary message from
+// their coach and it is indistinguishable afterwards. Deliberate product
+// decision — don't add a "was this really the coach" check expecting one.
+//
+// Voice notes and shared progress pictures render inline here via short-lived
+// signed URLs; the storage policies (0048, 0068) already grant admin select.
 
 type ChatMessage = {
   id: string;
@@ -12,6 +21,9 @@ type ChatMessage = {
   client_id: string;
   sender_id: string;
   body: string;
+  kind: 'text' | 'voice' | 'image';
+  media_path: string | null;
+  duration_sec: number | null;
   created_at: string;
   read_at: string | null;
 };
@@ -181,9 +193,12 @@ function ThreadModal({
 }) {
   const [messages, setMessages] = useState<ChatMessage[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [draft, setDraft] = useState('');
+  const [sending, setSending] = useState(false);
+  const [media, setMedia] = useState<Record<string, string>>({});
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     supabase
       .from('coach_messages')
       .select('*')
@@ -201,6 +216,58 @@ function ThreadModal({
   }, [thread]);
 
   useEffect(() => {
+    load();
+  }, [load]);
+
+  // Sign every attachment in the thread, batched per bucket.
+  useEffect(() => {
+    if (!messages) return;
+    const want = (kind: 'voice' | 'image') =>
+      messages.filter((m) => m.kind === kind && m.media_path && !media[m.media_path]).map((m) => m.media_path!);
+
+    (async () => {
+      const next: Record<string, string> = {};
+      for (const [bucket, paths] of [
+        ['voice-notes', want('voice')],
+        ['chat-images', want('image')],
+      ] as const) {
+        if (paths.length === 0) continue;
+        const { data } = await supabase.storage.from(bucket).createSignedUrls(paths, 3600);
+        for (const s of data ?? []) if (s.path && s.signedUrl) next[s.path] = s.signedUrl;
+      }
+      if (Object.keys(next).length > 0) setMedia((prev) => ({ ...prev, ...next }));
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages]);
+
+  async function sendReply() {
+    const body = draft.trim();
+    if (!body || sending) return;
+    setSending(true);
+    setError(null);
+    // sender_id is the COACH — see the file header. The insert policy checks
+    // is_admin() and that this pair is a genuine assignment.
+    const { data, error: err } = await supabase
+      .from('coach_messages')
+      .insert({
+        coach_id: thread.coachId,
+        client_id: thread.clientId,
+        sender_id: thread.coachId,
+        body,
+        kind: 'text',
+      })
+      .select('*')
+      .single();
+    setSending(false);
+    if (err) {
+      setError(err.message);
+      return;
+    }
+    setDraft('');
+    setMessages((prev) => [...(prev ?? []), data as ChatMessage]);
+  }
+
+  useEffect(() => {
     // Open at the latest message, like a chat app.
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [messages]);
@@ -216,7 +283,7 @@ function ThreadModal({
           <button className="btn ghost small" onClick={onClose}>Close</button>
         </div>
         <p className="muted" style={{ margin: '4px 0 10px' }}>
-          Read-only · showing the latest {THREAD_LIMIT} messages
+          Showing the latest {THREAD_LIMIT} messages · replies are sent as <strong>{coachName}</strong>
         </p>
 
         {error && <div className="error-box">{error}</div>}
@@ -226,6 +293,7 @@ function ThreadModal({
           <div className="chat-scroll" ref={scrollRef}>
             {messages.map((m) => {
               const fromCoach = m.sender_id === thread.coachId;
+              const url = m.media_path ? media[m.media_path] : undefined;
               return (
                 <div key={m.id} className={`chat-bubble-row${fromCoach ? ' coach' : ''}`}>
                   <div className={`chat-bubble${fromCoach ? ' coach' : ''}`}>
@@ -233,7 +301,27 @@ function ThreadModal({
                       {fromCoach ? coachName : clientName} · {new Date(m.created_at).toLocaleString()}
                       {m.read_at ? ' · read' : ''}
                     </div>
-                    {m.body}
+
+                    {m.kind === 'voice' ? (
+                      url ? (
+                        <audio controls src={url} style={{ height: 34, maxWidth: 260, display: 'block' }} />
+                      ) : (
+                        <span className="muted">Loading voice note…</span>
+                      )
+                    ) : m.kind === 'image' ? (
+                      <>
+                        {url ? (
+                          <a href={url} target="_blank" rel="noreferrer">
+                            <img src={url} alt="Shared photo" style={{ maxWidth: 200, borderRadius: 10, display: 'block' }} />
+                          </a>
+                        ) : (
+                          <span className="muted">Loading photo…</span>
+                        )}
+                        {m.body && m.body !== '📷 Photo' && <div style={{ marginTop: 6 }}>{m.body}</div>}
+                      </>
+                    ) : (
+                      m.body
+                    )}
                   </div>
                 </div>
               );
@@ -241,6 +329,26 @@ function ThreadModal({
             {messages.length === 0 && <div className="muted">No messages in this thread.</div>}
           </div>
         )}
+
+        <div className="row" style={{ marginTop: 10, alignItems: 'flex-end' }}>
+          <textarea
+            className="inline"
+            placeholder={`Reply as ${coachName}…`}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendReply();
+              }
+            }}
+            rows={2}
+            style={{ flex: 1, resize: 'vertical', minHeight: 40, fontFamily: 'inherit' }}
+          />
+          <button className="btn" onClick={sendReply} disabled={!draft.trim() || sending}>
+            {sending ? 'Sending…' : 'Send'}
+          </button>
+        </div>
       </div>
     </div>
   );
