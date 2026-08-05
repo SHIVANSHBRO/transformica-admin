@@ -246,10 +246,27 @@ export function AddUserForm({ role, onDone }: { role: 'client' | 'coach'; onDone
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
 
+  // The coach app signs in with EMAIL ONLY, so a coach created with just a
+  // phone number can never log in — and nothing would tell you until they
+  // tried. Members are the other way round: phone is their primary identity.
+  const isCoach = role === 'coach';
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!firstName || !password || (!phone && !email)) {
-      toast('Need a name, a password, and a phone or email', 'error');
+    if (!firstName || !password) {
+      toast('Need a name and a password', 'error');
+      return;
+    }
+    if (isCoach && !email.trim()) {
+      toast('Coaches sign in with their email — an email address is required', 'error');
+      return;
+    }
+    if (!isCoach && !phone && !email) {
+      toast('Need a phone or email', 'error');
+      return;
+    }
+    if (password.length < 6) {
+      toast('Password must be at least 6 characters', 'error');
       return;
     }
     setBusy(true);
@@ -266,31 +283,49 @@ export function AddUserForm({ role, onDone }: { role: 'client' | 'coach'; onDone
       toast(res.error, 'error');
       return;
     }
-    toast(`${role === 'coach' ? 'Coach' : 'Member'} created — share the password with them`);
+    toast(`${isCoach ? 'Coach' : 'Member'} created — share the email and password with them`);
+    setFirstName('');
+    setPhone('');
+    setEmail('');
+    setPassword('');
     onDone();
   }
 
   return (
-    <form className="row" style={{ marginTop: 14 }} onSubmit={submit}>
-      <label className="field grow">
-        First name
-        <input value={firstName} onChange={(e) => setFirstName(e.target.value)} placeholder="Aarav" />
-      </label>
-      <label className="field grow">
-        Phone (10-digit or +91…)
-        <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="9876543210" />
-      </label>
-      <label className="field grow">
-        Email (optional)
-        <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="them@example.com" />
-      </label>
-      <label className="field grow">
-        Starter password
-        <input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="min 6 chars" />
-      </label>
-      <button className="btn" disabled={busy} style={{ alignSelf: 'flex-end' }}>
-        {busy ? 'Creating…' : `Create ${role}`}
-      </button>
-    </form>
+    <>
+      <form className="row" style={{ marginTop: 14 }} onSubmit={submit}>
+        <label className="field grow">
+          First name
+          <input value={firstName} onChange={(e) => setFirstName(e.target.value)} placeholder={isCoach ? 'Neha' : 'Aarav'} />
+        </label>
+        <label className="field grow">
+          {isCoach ? 'Email (they sign in with this)' : 'Email (optional)'}
+          <input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder={isCoach ? 'neha@transformica.in' : 'them@example.com'}
+            autoComplete="off"
+          />
+        </label>
+        <label className="field grow">
+          {isCoach ? 'Phone (optional)' : 'Phone (10-digit or +91…)'}
+          <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="9876543210" />
+        </label>
+        <label className="field grow">
+          Starter password
+          <input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="min 6 chars" autoComplete="new-password" />
+        </label>
+        <button className="btn" disabled={busy} style={{ alignSelf: 'flex-end' }}>
+          {busy ? 'Creating…' : `Create ${role}`}
+        </button>
+      </form>
+      {isCoach && (
+        <p className="muted" style={{ margin: '10px 0 0' }}>
+          The coach signs in to the <strong>Transformica Coach</strong> app with this email and password. There is no
+          sign-up in that app — every coach account is created here.
+        </p>
+      )}
+    </>
   );
 }
