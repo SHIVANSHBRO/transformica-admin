@@ -223,6 +223,10 @@ export function Members() {
             return coach ? displayName(coach) : null;
           })()}
           onClose={() => setDetail(null)}
+          onPatch={(patch) => {
+            setMembers((prev) => prev.map((m) => (m.id === detail.id ? { ...m, ...patch } : m)));
+            setDetail((d) => (d ? { ...d, ...patch } : d));
+          }}
         />
       )}
     </>

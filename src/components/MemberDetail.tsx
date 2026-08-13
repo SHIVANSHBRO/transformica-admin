@@ -20,7 +20,18 @@ type Vitals = {
   waist: number | null;
 };
 
-export function MemberDetail({ member, coachName, onClose }: { member: Profile; coachName: string | null; onClose: () => void }) {
+export function MemberDetail({
+  member,
+  coachName,
+  onClose,
+  onPatch,
+}: {
+  member: Profile;
+  coachName: string | null;
+  onClose: () => void;
+  /** Keeps the members table in sync when a field is edited from in here. */
+  onPatch?: (patch: Partial<Profile>) => void;
+}) {
   const [intake, setIntake] = useState<Intake | null | undefined>(undefined);
   const [vitals, setVitals] = useState<Vitals | null>(null);
 
@@ -72,6 +83,8 @@ export function MemberDetail({ member, coachName, onClose }: { member: Profile; 
           <Fact label="Kcal target" value={member.daily_kcal_target != null ? `${member.daily_kcal_target}` : '—'} />
         </div>
 
+        <StepGoal member={member} onPatch={onPatch} />
+
         <h3 style={{ marginTop: 18 }}>Consultation form {intake === null && <span className="badge warn">not filled yet</span>}{intake?.completed && <span className="badge ok">completed</span>}</h3>
         {intake ? (
           <div className="detail-grid">
@@ -92,6 +105,82 @@ export function MemberDetail({ member, coachName, onClose }: { member: Profile; 
         <DietLog memberId={member.id} />
       </div>
     </div>
+  );
+}
+
+// Server-side bounds from coach_set_step_goal (migration 0022/0056). Mirrored
+// here only so a bad number is rejected before the round trip — the function is
+// still the authority, and clearing sends null (member falls back to 10,000).
+const STEP_MIN = 1000;
+const STEP_MAX = 50000;
+
+/**
+ * Daily step goal. Written through the same `coach_set_step_goal` RPC the coach
+ * app uses rather than a direct profiles UPDATE: the function is
+ * security-definer and scoped to this one column, so the range check can't be
+ * bypassed and the two surfaces can't drift apart.
+ */
+function StepGoal({ member, onPatch }: { member: Profile; onPatch?: (patch: Partial<Profile>) => void }) {
+  const [goal, setGoal] = useState<number | null>(member.daily_steps_target ?? null);
+  const [input, setInput] = useState(member.daily_steps_target != null ? String(member.daily_steps_target) : '');
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<{ text: string; bad?: boolean } | null>(null);
+
+  // The modal is remounted per member, but a parent re-render with a fresh row
+  // (after a save elsewhere) should still win over stale local state.
+  useEffect(() => {
+    setGoal(member.daily_steps_target ?? null);
+    setInput(member.daily_steps_target != null ? String(member.daily_steps_target) : '');
+    setNote(null);
+  }, [member.id, member.daily_steps_target]);
+
+  async function write(steps: number | null) {
+    setBusy(true);
+    setNote(null);
+    const { error } = await supabase.rpc('coach_set_step_goal', { target_client: member.id, steps });
+    setBusy(false);
+    if (error) {
+      setNote({ text: error.message, bad: true });
+      return;
+    }
+    setGoal(steps);
+    onPatch?.({ daily_steps_target: steps });
+    setNote({ text: steps == null ? 'Cleared — back to the 10,000 default.' : `Saved. ${member.first_name} sees ${steps.toLocaleString('en-IN')} on their home screen.` });
+  }
+
+  function save() {
+    const v = Number(input.replace(/[^\d]/g, ''));
+    if (!Number.isFinite(v) || v < STEP_MIN || v > STEP_MAX) {
+      setNote({ text: `Enter a goal between ${STEP_MIN.toLocaleString('en-IN')} and ${STEP_MAX.toLocaleString('en-IN')}.`, bad: true });
+      return;
+    }
+    write(v);
+  }
+
+  return (
+    <>
+      <h3 style={{ marginTop: 18 }}>Daily step goal</h3>
+      <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+        <input
+          type="number"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && save()}
+          placeholder="10000"
+          min={STEP_MIN}
+          max={STEP_MAX}
+          step={500}
+          style={{ width: 140 }}
+        />
+        <button className="btn small" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Set goal'}</button>
+        {goal != null && (
+          <button className="btn ghost small" onClick={() => write(null)} disabled={busy}>Clear</button>
+        )}
+      </div>
+      <p className="muted" style={{ marginTop: 6, color: note?.bad ? '#c0392b' : undefined }}>
+        {note?.text ?? (goal != null ? `Current: ${goal.toLocaleString('en-IN')} steps/day.` : 'No goal set — the member sees the 10,000 default.')}
+      </p>
+    </>
   );
 }
 

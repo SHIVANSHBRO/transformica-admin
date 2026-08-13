@@ -12,6 +12,7 @@ export type Profile = {
   daily_protein_target: number | null;
   daily_carbs_target: number | null;
   daily_fat_target: number | null;
+  daily_steps_target: number | null;
   target_weight_kg: number | null;
   start_weight_kg: number | null;
   created_at: string;
