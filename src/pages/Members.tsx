@@ -92,6 +92,14 @@ export function Members() {
     await load();
   }
 
+  // Emails a fresh sign-in code. Works for any email account, not just invited
+  // ones — it's also the "they're locked out and forgot their password" fix.
+  async function resendInvite(m: Profile) {
+    const res = await adminOp({ action: 'resend_invite', user_id: m.id });
+    if (res.error) return toast(res.error, 'error');
+    toast(`Sign-in code sent to ${res.email ?? displayName(m)}`);
+  }
+
   return (
     <>
       <div className="card">
@@ -201,7 +209,10 @@ export function Members() {
                       <span className="muted">—</span>
                     )}
                   </td>
-                  <td>
+                  <td style={{ display: 'flex', gap: 6 }}>
+                    <button className="btn ghost small" onClick={() => resendInvite(m)} title="Email them a fresh sign-in code">
+                      Resend invite
+                    </button>
                     <button className="btn danger small" onClick={() => removeMember(m)}>Delete</button>
                   </td>
                 </tr>
@@ -249,16 +260,50 @@ export function AddUserForm({ role, onDone }: { role: 'client' | 'coach'; onDone
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
+  // 'invite' emails them a sign-in code and nobody ever handles a password;
+  // 'password' is the original flow, kept for phone-only members who have no
+  // email address to send a code to.
+  const [method, setMethod] = useState<'invite' | 'password'>('invite');
 
   // The coach app signs in with EMAIL ONLY, so a coach created with just a
   // phone number can never log in — and nothing would tell you until they
   // tried. Members are the other way round: phone is their primary identity.
   const isCoach = role === 'coach';
+  const isInvite = method === 'invite';
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!firstName || !password) {
-      toast('Need a name and a password', 'error');
+    if (!firstName) {
+      toast('Need a first name', 'error');
+      return;
+    }
+
+    if (isInvite) {
+      // An invite IS an email — there is no code to send without one.
+      if (!email.trim()) {
+        toast('An invite is sent by email, so an email address is required', 'error');
+        return;
+      }
+      setBusy(true);
+      const res = await adminOp({ action: 'invite_user', first_name: firstName, role, email: email.trim() });
+      setBusy(false);
+      if (res.error) {
+        toast(res.error, 'error');
+        return;
+      }
+      // The function returns a warning (not an error) when the account was
+      // created but the email bounced — surface it instead of claiming success.
+      if (res.warning) toast(String(res.warning), 'error');
+      else toast(`Invite sent to ${email.trim()} — they sign in with the emailed code`);
+      setFirstName('');
+      setPhone('');
+      setEmail('');
+      onDone();
+      return;
+    }
+
+    if (!password) {
+      toast('Need a password', 'error');
       return;
     }
     if (isCoach && !email.trim()) {
@@ -297,13 +342,30 @@ export function AddUserForm({ role, onDone }: { role: 'client' | 'coach'; onDone
 
   return (
     <>
-      <form className="row" style={{ marginTop: 14 }} onSubmit={submit}>
+      <div className="row" style={{ marginTop: 14, gap: 8 }}>
+        <button
+          type="button"
+          className={isInvite ? 'btn' : 'btn ghost'}
+          onClick={() => setMethod('invite')}
+        >
+          Send an invite
+        </button>
+        <button
+          type="button"
+          className={!isInvite ? 'btn' : 'btn ghost'}
+          onClick={() => setMethod('password')}
+        >
+          Set a starter password
+        </button>
+      </div>
+
+      <form className="row" style={{ marginTop: 10 }} onSubmit={submit}>
         <label className="field grow">
           First name
           <input value={firstName} onChange={(e) => setFirstName(e.target.value)} placeholder={isCoach ? 'Neha' : 'Aarav'} />
         </label>
         <label className="field grow">
-          {isCoach ? 'Email (they sign in with this)' : 'Email (optional)'}
+          {isInvite ? 'Email (the invite goes here)' : isCoach ? 'Email (they sign in with this)' : 'Email (optional)'}
           <input
             type="email"
             value={email}
@@ -312,22 +374,38 @@ export function AddUserForm({ role, onDone }: { role: 'client' | 'coach'; onDone
             autoComplete="off"
           />
         </label>
-        <label className="field grow">
-          {isCoach ? 'Phone (optional)' : 'Phone (10-digit or +91…)'}
-          <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="9876543210" />
-        </label>
-        <label className="field grow">
-          Starter password
-          <input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="min 6 chars" autoComplete="new-password" />
-        </label>
+        {!isInvite && (
+          <label className="field grow">
+            {isCoach ? 'Phone (optional)' : 'Phone (10-digit or +91…)'}
+            <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="9876543210" />
+          </label>
+        )}
+        {!isInvite && (
+          <label className="field grow">
+            Starter password
+            <input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="min 6 chars" autoComplete="new-password" />
+          </label>
+        )}
         <button className="btn" disabled={busy} style={{ alignSelf: 'flex-end' }}>
-          {busy ? 'Creating…' : `Create ${role}`}
+          {busy ? (isInvite ? 'Sending…' : 'Creating…') : isInvite ? 'Send invite' : `Create ${role}`}
         </button>
       </form>
-      {isCoach && (
+
+      {isInvite ? (
+        <p className="muted" style={{ margin: '10px 0 0' }}>
+          Creates the account and emails a sign-in code — no password is ever shared. They open the{' '}
+          <strong>{isCoach ? 'Transformica Coach' : 'Transformica'}</strong> app, enter this email, and tap{' '}
+          <strong>“Email me a code instead”</strong>. Codes expire, so if they take a while they can just tap that
+          button again for a fresh one; you can also use <strong>Resend invite</strong> on their row.
+        </p>
+      ) : isCoach ? (
         <p className="muted" style={{ margin: '10px 0 0' }}>
           The coach signs in to the <strong>Transformica Coach</strong> app with this email and password. There is no
           sign-up in that app — every coach account is created here.
+        </p>
+      ) : (
+        <p className="muted" style={{ margin: '10px 0 0' }}>
+          Use this for members with no email address — phone plus a starter password you pass on yourself.
         </p>
       )}
     </>
