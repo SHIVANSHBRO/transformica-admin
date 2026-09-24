@@ -156,13 +156,55 @@ export type WorkoutPlan = {
   created_at: string;
 };
 
-export type DietMealItem = { name: string; qty: string; kcal: string };
+export type DietType = 'veg' | 'egg' | 'non_veg';
+export type DietGoal = 'bulking' | 'cutting' | 'maintenance' | 'recomp' | 'therapeutic';
+
+// Optional per-item marker (0077). Absent on every plan authored before it, so
+// readers must treat it as unknown rather than assuming vegetarian.
+export type DietMealItem = { name: string; qty: string; kcal: string; diet?: DietType };
 export type DietMeal = { meal: string; items: DietMealItem[] };
+
+export const DIET_TYPE_LABELS: Record<DietType, string> = {
+  veg: 'Vegetarian',
+  egg: 'Eggetarian',
+  non_veg: 'Non-vegetarian',
+};
+
+export const DIET_GOAL_LABELS: Record<DietGoal, string> = {
+  bulking: 'Bulking',
+  cutting: 'Cutting',
+  maintenance: 'Maintenance',
+  recomp: 'Recomp',
+  therapeutic: 'Therapeutic',
+};
+
+/**
+ * The strictest diet type present in a plan's meals.
+ *
+ * Derived rather than trusted, so the badge stays correct after a coach edits
+ * the meals — someone adding chicken to a plan filed as "Vegetarian" should not
+ * leave it displaying a green marker. Items with no `diet` key (everything
+ * authored before 0077) are skipped, so the result is only ever as strict as
+ * the evidence supports; `stored` is the fallback when there is no evidence.
+ */
+export function derivedDietType(meals: DietMeal[], stored: DietType): DietType {
+  let seen: DietType | null = null;
+  for (const m of meals ?? []) {
+    for (const it of m.items ?? []) {
+      if (it.diet === 'non_veg') return 'non_veg'; // strictest — stop early
+      if (it.diet === 'egg') seen = 'egg';
+      else if (it.diet === 'veg' && seen === null) seen = 'veg';
+    }
+  }
+  return seen ?? stored;
+}
 
 export type DietPlan = {
   id: string;
   user_id: string;
   title: string;
+  diet_type: DietType;
+  goal: DietGoal | null;
   daily_kcal: number | null;
   daily_protein_g: number | null;
   daily_carbs_g: number | null;
@@ -195,6 +237,8 @@ export type WorkoutTemplateExercise = {
 export type DietTemplate = {
   id: string;
   title: string;
+  diet_type: DietType;
+  goal: DietGoal | null;
   daily_kcal: number | null;
   daily_protein_g: number | null;
   daily_carbs_g: number | null;

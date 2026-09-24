@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../supabase';
 import { useToast } from '../App';
 import { MemberPicker } from '../components/MemberPicker';
-import { DietMeal, DietPlan, DietTemplate, Profile, displayName } from '../types';
+import { DIET_GOAL_LABELS, DIET_TYPE_LABELS, DietGoal, DietMeal, DietPlan, DietTemplate, DietType, Profile, displayName } from '../types';
 
 const DEFAULT_MEALS: DietMeal[] = [
   { meal: 'Breakfast', items: [{ name: '', qty: '', kcal: '' }] },
@@ -18,6 +18,8 @@ export function DietPlans() {
   // Template builder
   const [showBuilder, setShowBuilder] = useState(false);
   const [title, setTitle] = useState('');
+  const [dietType, setDietType] = useState<DietType>('veg');
+  const [dietGoal, setDietGoal] = useState<DietGoal | ''>('');
   const [kcal, setKcal] = useState('');
   const [protein, setProtein] = useState('');
   const [carbs, setCarbs] = useState('');
@@ -78,6 +80,8 @@ export function DietPlans() {
     setSavingTpl(true);
     const { error } = await supabase.from('diet_plan_templates').insert({
       title: title.trim(),
+      diet_type: dietType,
+      goal: dietGoal || null,
       daily_kcal: kcal ? parseInt(kcal, 10) : null,
       daily_protein_g: protein ? parseInt(protein, 10) : null,
       daily_carbs_g: carbs ? parseInt(carbs, 10) : null,
@@ -89,6 +93,7 @@ export function DietPlans() {
     if (error) return toast(error.message, 'error');
     toast('Template saved to your library');
     setTitle(''); setKcal(''); setProtein(''); setCarbs(''); setFat(''); setNotes('');
+    setDietType('veg'); setDietGoal('');
     setMeals(structuredClone(DEFAULT_MEALS));
     setShowBuilder(false);
     await loadTemplates();
@@ -124,6 +129,8 @@ export function DietPlans() {
       ids.map((userId) => ({
         user_id: userId,
         title: tpl.title,
+        diet_type: tpl.diet_type,
+        goal: tpl.goal,
         daily_kcal: tpl.daily_kcal,
         daily_protein_g: tpl.daily_protein_g,
         daily_carbs_g: tpl.daily_carbs_g,
@@ -187,6 +194,23 @@ export function DietPlans() {
               <label className="field grow">
                 Template title
                 <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Fat-loss — 1800 kcal veg" />
+              </label>
+              <label className="field">
+                <span>Diet</span>
+                <select className="inline" value={dietType} onChange={(e) => setDietType(e.target.value as DietType)}>
+                  {(Object.keys(DIET_TYPE_LABELS) as DietType[]).map((k) => (
+                    <option key={k} value={k}>{DIET_TYPE_LABELS[k]}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="field">
+                <span>Goal</span>
+                <select className="inline" value={dietGoal} onChange={(e) => setDietGoal(e.target.value as DietGoal | '')}>
+                  <option value="">— none —</option>
+                  {(Object.keys(DIET_GOAL_LABELS) as DietGoal[]).map((k) => (
+                    <option key={k} value={k}>{DIET_GOAL_LABELS[k]}</option>
+                  ))}
+                </select>
               </label>
               <label className="field"><span>Kcal</span><input className="inline" style={{ width: 84 }} value={kcal} onChange={(e) => setKcal(e.target.value)} placeholder="1800" /></label>
               <label className="field"><span>Protein g</span><input className="inline" style={{ width: 84 }} value={protein} onChange={(e) => setProtein(e.target.value)} placeholder="140" /></label>
