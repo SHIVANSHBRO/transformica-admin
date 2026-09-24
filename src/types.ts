@@ -219,10 +219,22 @@ export type DietPlan = {
   created_at: string;
 };
 
+export type ProgrammeLevel = 'novice' | 'intermediate' | 'advanced';
+export type ProgrammeGoal = 'strength' | 'hypertrophy' | 'general';
+
 export type WorkoutTemplate = {
   id: string;
   title: string;
   created_at: string;
+  // 0082. All nullable except member_visible — templates built in the admin
+  // builder before 0082 carry none of this.
+  description: string | null;
+  level: ProgrammeLevel | null;
+  goal: ProgrammeGoal | null;
+  days_per_week: number | null;
+  source: string | null;
+  /** Shown in the member app's Programmes carousel. Off = admin-only draft. */
+  member_visible: boolean;
 };
 
 export type WorkoutTemplateExercise = {
@@ -236,7 +248,19 @@ export type WorkoutTemplateExercise = {
   time_under_tension_sec: number | null;
   rest_seconds: number | null;
   order_index: number;
+  /** 0079. Null on single-session templates from the builder. */
+  day_of_week: number | null;
+  /** 0082. Reps-in-reserve target band; rir_high null = exact. */
+  rir_low: number | null;
+  rir_high: number | null;
+  notes: string | null;
 };
+
+/** "2 RIR" / "3–4 RIR" / null — matches the member app's lib/rir.ts. */
+export function formatRir(low: number | null | undefined, high?: number | null): string | null {
+  if (low == null) return null;
+  return high != null && high !== low ? `${low}–${high} RIR` : `${low} RIR`;
+}
 
 export type DietTemplate = {
   id: string;

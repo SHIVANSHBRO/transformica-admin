@@ -2,7 +2,9 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../supabase';
 import { useToast } from '../App';
 import { MemberPicker } from '../components/MemberPicker';
-import { Exercise, Profile, WorkoutPlan, WorkoutTemplate, WorkoutTemplateExercise, displayName } from '../types';
+import { Exercise, Profile, WorkoutPlan, WorkoutTemplate, WorkoutTemplateExercise, displayName, formatRir } from '../types';
+
+const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 type DraftExercise = {
   exercise_id: string;
@@ -48,7 +50,9 @@ export function WorkoutPlans() {
 
   // Expandable template preview
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [preview, setPreview] = useState<{ name: string; muscle_group: string; sets: number; reps: string; weight: string | null }[]>([]);
+  const [preview, setPreview] = useState<
+    { name: string; muscle_group: string; sets: number; reps: string; weight: string | null; day: number | null; rir: string | null }[]
+  >([]);
 
   async function togglePreview(id: string) {
     if (expandedId === id) {
@@ -57,11 +61,23 @@ export function WorkoutPlans() {
     }
     const { data } = await supabase
       .from('workout_plan_template_exercises')
-      .select('sets, reps, target_weight_kg, set_weights_kg, exercise:exercises(name, muscle_group)')
+      .select('sets, reps, target_weight_kg, set_weights_kg, day_of_week, rir_low, rir_high, exercise:exercises(name, muscle_group)')
       .eq('template_id', id)
+      .order('day_of_week', { nullsFirst: true })
       .order('order_index');
     setPreview(
-      ((data as unknown as { sets: number; reps: string; target_weight_kg: number | null; set_weights_kg: (number | null)[] | null; exercise: { name: string; muscle_group: string } }[]) ?? []).map((r) => ({
+      ((data as unknown as {
+        sets: number;
+        reps: string;
+        target_weight_kg: number | null;
+        set_weights_kg: (number | null)[] | null;
+        day_of_week: number | null;
+        rir_low: number | null;
+        rir_high: number | null;
+        exercise: { name: string; muscle_group: string };
+      }[]) ?? []).map((r) => ({
+        day: r.day_of_week,
+        rir: formatRir(r.rir_low, r.rir_high),
         name: r.exercise?.name ?? '?',
         muscle_group: r.exercise?.muscle_group ?? '',
         sets: r.sets,
@@ -153,6 +169,18 @@ export function WorkoutPlans() {
     await loadTemplates();
   }
 
+  // Publishes/unpublishes a template to the member app's Programmes carousel
+  // (0082). Members read only member_visible rows, enforced by RLS.
+  async function toggleVisible(t: WorkoutTemplate) {
+    const { error } = await supabase
+      .from('workout_plan_templates')
+      .update({ member_visible: !t.member_visible })
+      .eq('id', t.id);
+    if (error) return toast(error.message, 'error');
+    toast(t.member_visible ? `"${t.title}" hidden from members` : `"${t.title}" is now in the member app`);
+    await loadTemplates();
+  }
+
   async function removeTemplate(t: WorkoutTemplate) {
     if (!window.confirm(`Delete template "${t.title}"? Plans already assigned to members are kept.`)) return;
     const { error } = await supabase.from('workout_plan_templates').delete().eq('id', t.id);
@@ -169,10 +197,13 @@ export function WorkoutPlans() {
     setAssigning(true);
 
     const tpl = templates.find((t) => t.id === tplId)!;
+    // Day first, then position: ordering by order_index alone interleaves
+    // Monday's and Thursday's rows of a multi-day programme.
     const { data: tplExercises, error: tplErr } = await supabase
       .from('workout_plan_template_exercises')
       .select('*')
       .eq('template_id', tplId)
+      .order('day_of_week', { nullsFirst: true })
       .order('order_index');
     if (tplErr || !tplExercises?.length) {
       setAssigning(false);
@@ -183,7 +214,15 @@ export function WorkoutPlans() {
     const today = new Date().toISOString().slice(0, 10);
     const { data: plans, error: planErr } = await supabase
       .from('workout_plans')
-      .insert(Array.from(checked).map((clientId) => ({ client_id: clientId, coach_id: null, title: tpl.title, starts_on: today })))
+      .insert(
+        Array.from(checked).map((clientId) => ({
+          client_id: clientId,
+          coach_id: null,
+          title: tpl.title,
+          phase_label: [tpl.level, tpl.goal].filter(Boolean).join(' · ').toUpperCase() || null,
+          starts_on: today,
+        }))
+      )
       .select('id');
     if (planErr || !plans) {
       setAssigning(false);
@@ -191,13 +230,17 @@ export function WorkoutPlans() {
       return;
     }
 
+    // A row's own weekday wins. Before this every row got TODAY, so a 0079
+    // programme assigned from here landed as one day holding the whole week —
+    // 27 exercises on a single Tuesday for Push/Pull/Legs. Only builder
+    // templates (no weekday) fall back to today, as they always did.
     const dayOfWeek = new Date().getDay();
     const { error: exErr } = await supabase.from('workout_plan_exercises').insert(
       plans.flatMap((p) =>
-        (tplExercises as (WorkoutTemplateExercise & { set_weights_kg: (number | null)[] | null })[]).map((e) => ({
+        (tplExercises as WorkoutTemplateExercise[]).map((e) => ({
           plan_id: p.id,
           exercise_id: e.exercise_id,
-          day_of_week: dayOfWeek,
+          day_of_week: e.day_of_week ?? dayOfWeek,
           sets: e.sets,
           reps: e.reps,
           rep_target: parseRepTarget(e.reps),
@@ -205,12 +248,21 @@ export function WorkoutPlans() {
           set_weights_kg: e.set_weights_kg ?? null,
           time_under_tension_sec: e.time_under_tension_sec ?? 40,
           rest_seconds: e.rest_seconds,
+          // The RIR prescription (0082) — without these the member sees a
+          // Pyramid programme as plain sets × reps.
+          rir_low: e.rir_low ?? null,
+          rir_high: e.rir_high ?? null,
+          notes: e.notes ?? null,
           order_index: e.order_index,
         }))
       )
     );
     setAssigning(false);
-    if (exErr) return toast(exErr.message, 'error');
+    if (exErr) {
+      // Don't leave members holding empty plans titled like the template.
+      await supabase.from('workout_plans').delete().in('id', plans.map((p) => p.id));
+      return toast(exErr.message, 'error');
+    }
     toast(`"${tpl.title}" assigned to ${checked.size} member${checked.size === 1 ? '' : 's'} 🎉`);
     setChecked(new Set());
     await loadMemberPlans();
@@ -322,10 +374,20 @@ export function WorkoutPlans() {
                     <button className="linklike" onClick={() => togglePreview(t.id)}>
                       {expandedId === t.id ? '▾ ' : '▸ '}{t.title}
                     </button>
+                    {(t.level || t.days_per_week) && (
+                      <div className="row" style={{ gap: 6, marginTop: 4 }}>
+                        {t.level && <span className="badge dim">{t.level}</span>}
+                        {t.goal && <span className="badge dim">{t.goal}</span>}
+                        {t.days_per_week && <span className="badge dim">{t.days_per_week} days/wk</span>}
+                      </div>
+                    )}
                   </td>
                   <td className="muted">{t.exercise_count} exercise{t.exercise_count === 1 ? '' : 's'}</td>
                   <td className="muted">{new Date(t.created_at).toLocaleDateString()}</td>
-                  <td style={{ textAlign: 'right' }}>
+                  <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                    <label className="muted" style={{ marginRight: 12, cursor: 'pointer' }} title="Show in the member app's Programmes carousel">
+                      <input type="checkbox" checked={t.member_visible} onChange={() => toggleVisible(t)} /> In member app
+                    </label>
                     <button className="btn danger small" onClick={() => removeTemplate(t)}>Delete</button>
                   </td>
                 </tr>
@@ -333,11 +395,24 @@ export function WorkoutPlans() {
                   <tr>
                     <td colSpan={4} style={{ background: '#fafbfe' }}>
                       {preview.map((e, i) => (
-                        <div key={i} className="row" style={{ padding: '4px 0' }}>
-                          <span className="badge dim">{e.muscle_group}</span>
-                          <strong>{e.name}</strong>
-                          <span className="muted">{e.sets} × {e.reps}{e.weight != null ? ` @ ${e.weight} kg` : ''}</span>
-                        </div>
+                        <React.Fragment key={i}>
+                          {/* Day heading whenever the weekday changes — a whole-week
+                              programme read as one flat list hides its split. */}
+                          {e.day != null && (i === 0 || preview[i - 1].day !== e.day) && (
+                            <div className="muted" style={{ fontWeight: 700, fontSize: 12, marginTop: i === 0 ? 0 : 10, textTransform: 'uppercase', letterSpacing: 0.6 }}>
+                              {DAY_NAMES[e.day]}
+                            </div>
+                          )}
+                          <div className="row" style={{ padding: '4px 0' }}>
+                            <span className="badge dim">{e.muscle_group}</span>
+                            <strong>{e.name}</strong>
+                            <span className="muted">
+                              {e.sets} × {e.reps}
+                              {e.weight != null ? ` @ ${e.weight} kg` : ''}
+                              {e.rir ? ` · ${e.rir}` : ''}
+                            </span>
+                          </div>
+                        </React.Fragment>
                       ))}
                     </td>
                   </tr>

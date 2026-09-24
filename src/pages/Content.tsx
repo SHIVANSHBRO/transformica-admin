@@ -11,6 +11,7 @@ const SCREENS = [
   { value: 'Videos', label: 'Videos library' },
   { value: 'LiveClasses', label: 'Live classes' },
   { value: 'Workouts', label: 'Workouts' },
+  { value: 'LearnHub', label: 'Learn (articles & quizzes)' },
   { value: 'ExerciseLibrary', label: 'Exercise library' },
   { value: 'RecipeLibrary', label: 'Recipe library' },
   { value: 'Goal', label: 'My goal' },
