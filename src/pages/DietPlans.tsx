@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../supabase';
 import { useToast } from '../App';
 import { MemberPicker } from '../components/MemberPicker';
-import { DIET_GOAL_LABELS, DIET_TYPE_LABELS, DietGoal, DietMeal, DietPlan, DietTemplate, DietType, Profile, displayName } from '../types';
+import { DIET_GOAL_LABELS, DIET_TYPE_LABELS, DietGoal, DietMeal, DietMealItem, DietPlan, DietTemplate, DietType, Profile, displayName } from '../types';
 
 const DEFAULT_MEALS: DietMeal[] = [
   { meal: 'Breakfast', items: [{ name: '', qty: '', kcal: '' }] },
@@ -281,14 +281,30 @@ export function DietPlans() {
                 {expandedId === t.id && (
                   <tr>
                     <td colSpan={5} style={{ background: '#fafbfe' }}>
-                      {t.meals.map((m, i) => (
-                        <div key={i} style={{ padding: '4px 0' }}>
-                          <strong>{m.meal}:</strong>{' '}
-                          <span className="muted">
-                            {m.items.map((it) => `${it.name}${it.qty ? ` (${it.qty})` : ''}${it.kcal ? ` · ${it.kcal} kcal` : ''}`).join(' · ')}
-                          </span>
-                        </div>
-                      ))}
+                      {t.meals.map((m, i) => {
+                        const line = (items: DietMealItem[]) =>
+                          items.map((it) => `${it.name}${it.qty ? ` (${it.qty})` : ''}${it.kcal ? ` · ${it.kcal} kcal` : ''}`).join(' · ');
+                        // A plan with swappable options (0081) must show all of
+                        // them here — a trainer assigning it needs to see the
+                        // whole menu they are handing over, not just option 1.
+                        const options = m.options ?? [];
+                        return (
+                          <div key={i} style={{ padding: '4px 0' }}>
+                            <strong>{m.meal}:</strong>{' '}
+                            {options.length > 1 ? (
+                              <div style={{ paddingLeft: 12 }}>
+                                {options.map((o, k) => (
+                                  <div key={k} className="muted" style={{ padding: '2px 0' }}>
+                                    <em>{o.label || `Option ${k + 1}`}</em> — {line(o.items)}
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <span className="muted">{line(m.items)}</span>
+                            )}
+                          </div>
+                        );
+                      })}
                       {t.notes && <div className="muted" style={{ marginTop: 4 }}>Notes: {t.notes}</div>}
                     </td>
                   </tr>

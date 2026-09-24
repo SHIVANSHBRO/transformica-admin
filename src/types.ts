@@ -162,7 +162,11 @@ export type DietGoal = 'bulking' | 'cutting' | 'maintenance' | 'recomp' | 'thera
 // Optional per-item marker (0077). Absent on every plan authored before it, so
 // readers must treat it as unknown rather than assuming vegetarian.
 export type DietMealItem = { name: string; qty: string; kcal: string; diet?: DietType };
-export type DietMeal = { meal: string; items: DietMealItem[] };
+export type DietMealOption = { label: string; items: DietMealItem[] };
+// `options` (0081): 2-3 swappable menus for one meal. `items` is always present
+// and always equals option 1, so a reader that ignores options still renders a
+// complete plan.
+export type DietMeal = { meal: string; items: DietMealItem[]; options?: DietMealOption[] };
 
 export const DIET_TYPE_LABELS: Record<DietType, string> = {
   veg: 'Vegetarian',
