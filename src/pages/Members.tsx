@@ -14,25 +14,93 @@ const FILTERS = [
 ] as const;
 type FilterKey = (typeof FILTERS)[number]['key'];
 
+// Which accounts to list. Defaults to members, but nobody is ever unreachable:
+// the owner's own login is an ADMIN (0017) and used to appear on no tab.
+const ROLES = [
+  { key: 'client', label: 'Members' },
+  { key: 'coach', label: 'Coaches' },
+  { key: 'admin', label: 'Admins' },
+  { key: 'all', label: 'Everyone' },
+] as const;
+type RoleKey = (typeof ROLES)[number]['key'];
+
+// PostgREST returns at most 1,000 rows per request; page past it.
+const PAGE = 1000;
+async function fetchAll<T>(page: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>): Promise<T[]> {
+  const out: T[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await page(from, from + PAGE - 1);
+    if (error) throw new Error(error.message);
+    out.push(...(data ?? []));
+    if (!data || data.length < PAGE) return out;
+  }
+}
+
+type Directory = Map<string, { email: string | null; lastSignIn: string | null }>;
+
+const digits = (s: string) => s.replace(/\D/g, '');
+
+/** Every word typed must appear in the name, the email or the phone number. */
+function matches(m: Profile, email: string | null, q: string): boolean {
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return true;
+  const hay = `${displayName(m)} ${email ?? ''}`.toLowerCase();
+  const phone = digits(m.phone ?? '');
+  return words.every((w) => {
+    if (hay.includes(w)) return true;
+    // Phone: compare digits only, so "98765 43210", "+91 9876543210" and
+    // "919876543210" all find the same member.
+    const d = digits(w);
+    return d.length >= 3 && phone.includes(d.length > 10 ? d.slice(-10) : d);
+  });
+}
+
+/** Name, or a clear stand-in: signup stores "there" when no name was given. */
+function nameOf(m: Profile): string {
+  const n = displayName(m).trim();
+  return !n || n.toLowerCase() === 'there' ? 'No name' : n;
+}
+
 export function Members() {
   const toast = useToast();
-  const [members, setMembers] = useState<Profile[]>([]);
-  const [coaches, setCoaches] = useState<Profile[]>([]);
+  // Every account (all roles); `members` is just the ones the role filter shows.
+  const [accounts, setAccounts] = useState<Profile[]>([]);
   const [links, setLinks] = useState<CoachLink[]>([]);
+  const [directory, setDirectory] = useState<Directory>(new Map());
+  const [directoryMissing, setDirectoryMissing] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  const [role, setRole] = useState<RoleKey>('client');
   const [filter, setFilter] = useState<FilterKey>('all');
   const [showAdd, setShowAdd] = useState(false);
   const [detail, setDetail] = useState<Profile | null>(null);
+  const setMembers = setAccounts; // row edits patch the full account list
 
   const load = useCallback(async () => {
-    const [{ data: clients }, { data: coachRows }, { data: linkRows }] = await Promise.all([
-      supabase.from('profiles').select('*').eq('role', 'client').order('created_at', { ascending: false }),
-      supabase.from('profiles').select('*').eq('role', 'coach').order('first_name'),
-      supabase.from('coach_clients').select('*'),
-    ]);
-    setMembers((clients as Profile[]) ?? []);
-    setCoaches((coachRows as Profile[]) ?? []);
-    setLinks((linkRows as CoachLink[]) ?? []);
+    try {
+      const [profiles, linkRows] = await Promise.all([
+        fetchAll<Profile>((a, b) => supabase.from('profiles').select('*').order('created_at', { ascending: false }).order('id').range(a, b)),
+        fetchAll<CoachLink>((a, b) => supabase.from('coach_clients').select('*').order('id').range(a, b)),
+      ]);
+      setAccounts(profiles);
+      setLinks(linkRows);
+      setLoadError(null);
+    } catch (e) {
+      // Surface it — an empty table with no message looks like "no members".
+      setLoadError(e instanceof Error ? e.message : String(e));
+    }
+    // Emails come from auth.users via 0093. Optional: without it the list
+    // still works, only email search is off (and we say so).
+    try {
+      const rows = await fetchAll<{ id: string; email: string | null; last_sign_in_at: string | null }>((a, b) =>
+        supabase.rpc('admin_account_directory').range(a, b)
+      );
+      setDirectory(new Map(rows.map((r) => [r.id, { email: r.email, lastSignIn: r.last_sign_in_at }])));
+      setDirectoryMissing(false);
+    } catch (e) {
+      console.warn('admin_account_directory failed:', e);
+      setDirectoryMissing(true);
+    }
   }, []);
 
   useEffect(() => {
@@ -40,16 +108,28 @@ export function Members() {
   }, [load]);
 
   const linkByClient = useMemo(() => new Map(links.map((l) => [l.client_id, l])), [links]);
+  const coaches = useMemo(() => accounts.filter((a) => a.role === 'coach').sort((a, b) => displayName(a).localeCompare(displayName(b))), [accounts]);
+  const members = useMemo(() => (role === 'all' ? accounts : accounts.filter((a) => a.role === role)), [accounts, role]);
+  const roleCounts = useMemo(() => {
+    const c: Record<RoleKey, number> = { client: 0, coach: 0, admin: 0, all: accounts.length };
+    accounts.forEach((a) => (c[a.role] += 1));
+    return c;
+  }, [accounts]);
 
+  const q = search.trim();
   const filtered = members.filter((m) => {
-    const q = search.trim().toLowerCase();
-    if (q && !displayName(m).toLowerCase().includes(q) && !(m.phone ?? '').includes(q)) return false;
+    if (!matches(m, directory.get(m.id)?.email ?? null, q)) return false;
     const days = daysUntil(m.plan_expires_at);
     if (filter === 'expiring') return days !== null && days >= 0 && days <= 7;
     if (filter === 'expired') return days !== null && days < 0;
     if (filter === 'no_coach') return !linkByClient.has(m.id);
     return true;
   });
+
+  // A search that finds nothing here but DOES match another role — say so,
+  // rather than let an admin/coach account look like it doesn't exist.
+  const elsewhere =
+    role === 'all' || !q ? 0 : accounts.filter((a) => a.role !== role && matches(a, directory.get(a.id)?.email ?? null, q)).length;
 
   async function updateProfile(id: string, patch: Partial<Profile>, okMessage: string) {
     const { error } = await supabase.from('profiles').update(patch).eq('id', id);
@@ -106,16 +186,33 @@ export function Members() {
         <div className="row">
           <input
             className="grow"
-            placeholder="Search by name or phone…"
+            placeholder={directoryMissing ? 'Search by name or phone…' : 'Search by name, email or phone…'}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
-          <span className="muted">{filtered.length} member{filtered.length === 1 ? '' : 's'}</span>
+          <span className="muted">{filtered.length} {role === 'client' ? 'member' : 'account'}{filtered.length === 1 ? '' : 's'}</span>
           <button className="btn" onClick={() => setShowAdd((v) => !v)}>
             {showAdd ? 'Close' : '+ Add member'}
           </button>
         </div>
+        {loadError && (
+          <div className="error-box" style={{ marginTop: 10 }}>
+            Couldn't load accounts: {loadError} <button className="btn ghost small" onClick={load}>Retry</button>
+          </div>
+        )}
+        {directoryMissing && !loadError && (
+          <div className="muted" style={{ marginTop: 8 }}>
+            Email search is off — paste migration <code>0093_admin_account_directory.sql</code> to turn it on.
+          </div>
+        )}
         <div className="row" style={{ marginTop: 10 }}>
+          {ROLES.map((r) => (
+            <button key={r.key} className={`chip${role === r.key ? ' active' : ''}`} onClick={() => setRole(r.key)}>
+              {r.label} · {roleCounts[r.key]}
+            </button>
+          ))}
+        </div>
+        <div className="row" style={{ marginTop: 8 }}>
           {FILTERS.map((f) => (
             <button key={f.key} className={`chip${filter === f.key ? ' active' : ''}`} onClick={() => setFilter(f.key)}>
               {f.label}
@@ -150,12 +247,16 @@ export function Members() {
           <tbody>
             {filtered.map((m) => {
               const link = linkByClient.get(m.id);
+              const email = directory.get(m.id)?.email;
+              const isClient = m.role === 'client';
               return (
                 <tr key={m.id}>
                   <td>
                     <button className="linklike" onClick={() => setDetail(m)} title="Open member profile">
-                      {displayName(m)}
+                      {nameOf(m)}
                     </button>
+                    {!isClient && <span className={`badge ${m.role === 'admin' ? 'warn' : 'dim'}`} style={{ marginLeft: 6 }}>{m.role}</span>}
+                    {email && <div className="muted">{email}</div>}
                     <div className="muted">joined {new Date(m.created_at).toLocaleDateString()}</div>
                   </td>
                   <td>{m.phone ?? <span className="muted">—</span>}</td>
@@ -191,12 +292,16 @@ export function Members() {
                   </td>
                   <td><ExpiryBadge date={m.plan_expires_at} /></td>
                   <td>
-                    <select className="inline" value={link?.coach_id ?? ''} onChange={(e) => assignCoach(m.id, e.target.value)}>
-                      <option value="">— none —</option>
-                      {coaches.map((c) => (
-                        <option key={c.id} value={c.id}>{displayName(c)}</option>
-                      ))}
-                    </select>
+                    {isClient ? (
+                      <select className="inline" value={link?.coach_id ?? ''} onChange={(e) => assignCoach(m.id, e.target.value)}>
+                        <option value="">— none —</option>
+                        {coaches.map((c) => (
+                          <option key={c.id} value={c.id}>{displayName(c)}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span className="muted">—</span>
+                    )}
                   </td>
                   <td>
                     {link ? (
@@ -213,13 +318,26 @@ export function Members() {
                     <button className="btn ghost small" onClick={() => resendInvite(m)} title="Email them a fresh sign-in code">
                       Resend invite
                     </button>
-                    <button className="btn danger small" onClick={() => removeMember(m)}>Delete</button>
+                    {/* Deleting an admin from a list row is one mis-click from
+                        locking yourself out of this panel — do that in SQL. */}
+                    {m.role !== 'admin' && <button className="btn danger small" onClick={() => removeMember(m)}>Delete</button>}
                   </td>
                 </tr>
               );
             })}
             {filtered.length === 0 && (
-              <tr><td colSpan={8} className="muted">No members match.</td></tr>
+              <tr>
+                <td colSpan={8} className="muted">
+                  {elsewhere > 0 ? (
+                    <>
+                      No {ROLES.find((r) => r.key === role)?.label.toLowerCase()} match — but {elsewhere} other account{elsewhere === 1 ? '' : 's'} do.{' '}
+                      <button className="btn ghost small" onClick={() => setRole('all')}>Show everyone</button>
+                    </>
+                  ) : (
+                    'No accounts match.'
+                  )}
+                </td>
+              </tr>
             )}
           </tbody>
         </table>
