@@ -72,6 +72,12 @@ input, select, textarea {
 }
 input:focus, select:focus, textarea:focus { outline: 2px solid var(--blue-tint); border-color: var(--blue); }
 input[type="date"] { width: auto; }
+/* The width:100% above must never reach checkboxes/radios: a stretched
+   checkbox pushes its label and the row's buttons out of the card (Workout
+   plans "In member app", Learn "Live" / "In final"). */
+input[type="checkbox"], input[type="radio"] {
+  width: auto; padding: 0; margin: 0 6px 0 0; vertical-align: middle; accent-color: var(--blue);
+}
 input.inline, select.inline { width: auto; }
 
 button { font: inherit; cursor: pointer; }
