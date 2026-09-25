@@ -231,14 +231,14 @@ export function Members() {
       </div>
 
       <div className="card">
+        {/* Scrolls inside the card on a narrow window instead of spilling out of it. */}
+        <div className="table-scroll">
         <table>
           <thead>
             <tr>
               <th>Member</th>
-              <th>Phone</th>
               <th>Plan</th>
               <th>Expires</th>
-              <th></th>
               <th>Coach</th>
               <th>Status</th>
               <th></th>
@@ -256,10 +256,11 @@ export function Members() {
                       {nameOf(m)}
                     </button>
                     {!isClient && <span className={`badge ${m.role === 'admin' ? 'warn' : 'dim'}`} style={{ marginLeft: 6 }}>{m.role}</span>}
-                    {email && <div className="muted">{email}</div>}
-                    <div className="muted">joined {new Date(m.created_at).toLocaleDateString()}</div>
+                    {email && <div className="muted cell-ellipsis" title={email}>{email}</div>}
+                    <div className="muted">
+                      {m.phone ?? 'no phone'} · joined {new Date(m.created_at).toLocaleDateString()}
+                    </div>
                   </td>
-                  <td>{m.phone ?? <span className="muted">—</span>}</td>
                   <td>
                     <select
                       className="inline"
@@ -289,8 +290,8 @@ export function Members() {
                       value={m.plan_expires_at ?? ''}
                       onChange={(e) => updateProfile(m.id, { plan_expires_at: e.target.value || null }, 'Expiry updated')}
                     />
+                    <div style={{ marginTop: 4 }}><ExpiryBadge date={m.plan_expires_at} /></div>
                   </td>
-                  <td><ExpiryBadge date={m.plan_expires_at} /></td>
                   <td>
                     {isClient ? (
                       <select className="inline" value={link?.coach_id ?? ''} onChange={(e) => assignCoach(m.id, e.target.value)}>
@@ -314,20 +315,24 @@ export function Members() {
                       <span className="muted">—</span>
                     )}
                   </td>
-                  <td style={{ display: 'flex', gap: 6 }}>
-                    <button className="btn ghost small" onClick={() => resendInvite(m)} title="Email them a fresh sign-in code">
-                      Resend invite
-                    </button>
-                    {/* Deleting an admin from a list row is one mis-click from
-                        locking yourself out of this panel — do that in SQL. */}
-                    {m.role !== 'admin' && <button className="btn danger small" onClick={() => removeMember(m)}>Delete</button>}
+                  {/* flex lives on an inner div: display:flex on the <td> itself
+                      takes the cell out of table layout. */}
+                  <td>
+                    <div className="row-actions">
+                      <button className="btn ghost small" onClick={() => resendInvite(m)} title="Email them a fresh sign-in code (also the fix for a forgotten password)">
+                        Send code
+                      </button>
+                      {/* Deleting an admin from a list row is one mis-click from
+                          locking yourself out of this panel — do that in SQL. */}
+                      {m.role !== 'admin' && <button className="btn danger small" onClick={() => removeMember(m)}>Delete</button>}
+                    </div>
                   </td>
                 </tr>
               );
             })}
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={8} className="muted">
+                <td colSpan={6} className="muted">
                   {elsewhere > 0 ? (
                     <>
                       No {ROLES.find((r) => r.key === role)?.label.toLowerCase()} match — but {elsewhere} other account{elsewhere === 1 ? '' : 's'} do.{' '}
@@ -341,6 +346,7 @@ export function Members() {
             )}
           </tbody>
         </table>
+        </div>
       </div>
 
       {detail && (
@@ -514,7 +520,7 @@ export function AddUserForm({ role, onDone }: { role: 'client' | 'coach'; onDone
           Creates the account and emails a sign-in code — no password is ever shared. They open the{' '}
           <strong>{isCoach ? 'Transformica Coach' : 'Transformica'}</strong> app, enter this email, and tap{' '}
           <strong>“Email me a code instead”</strong>. Codes expire, so if they take a while they can just tap that
-          button again for a fresh one; you can also use <strong>Resend invite</strong> on their row.
+          button again for a fresh one; you can also use <strong>Send code</strong> on their row.
         </p>
       ) : isCoach ? (
         <p className="muted" style={{ margin: '10px 0 0' }}>

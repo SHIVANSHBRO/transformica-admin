@@ -28,6 +28,7 @@ const DIFFICULTIES = ['Beginner', 'Intermediate', 'Advanced'] as const;
 export function Content() {
   return (
     <>
+      <Tutorials />
       <Banners />
       <Stories />
       <Recipes />
@@ -468,7 +469,8 @@ function Banners() {
   return (
     <div className="card">
       <div className="row">
-        <h2 style={{ margin: 0 }}>Home-screen banners</h2>
+        <h2 style={{ margin: 0 }}>Promo banners</h2>
+        <span className="muted">shown on the app's Discover page</span>
         <span className="muted">promos & motivation · auto-slide in the app</span>
         <div className="spacer" />
         <button className="btn" onClick={() => setShow((v) => !v)}>{show ? 'Close' : '+ New banner'}</button>
@@ -655,6 +657,148 @@ function Videos() {
           {videos.length === 0 && <tr><td className="muted">No videos yet.</td></tr>}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+/* ---------------- Feature tutorials ---------------- */
+
+// The sheet a member sees the FIRST time they open each feature (0095). The app
+// has built-in text steps; what you save here replaces them, and a YouTube
+// link adds the 30-second clip. Keys must match app/src/lib/tutorials.ts.
+const TUTORIAL_FEATURES: { key: string; label: string }[] = [
+  { key: 'food_snap', label: 'Food Snap (photo meal logging)' },
+  { key: 'nutrition', label: 'Nutrition' },
+  { key: 'water', label: 'Water' },
+  { key: 'energy', label: 'Energy (BMR & TDEE)' },
+  { key: 'workout_session', label: 'Workout session' },
+  { key: 'form_check', label: 'Form check' },
+  { key: 'challenges', label: 'Challenges' },
+  { key: 'steps', label: 'Steps & walking' },
+  { key: 'lab_reports', label: 'Blood reports' },
+  { key: 'aasha', label: 'Aasha AI chat' },
+];
+
+type TutorialRow = { feature_key: string; title: string; youtube_url: string | null; steps: string[]; active: boolean };
+
+function Tutorials() {
+  const toast = useToast();
+  const [rows, setRows] = useState<Record<string, TutorialRow>>({});
+  const [missing, setMissing] = useState(false);
+  const [open, setOpen] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    const { data, error } = await supabase.from('feature_tutorials').select('*');
+    if (error) {
+      setMissing(true);
+      return;
+    }
+    setMissing(false);
+    setRows(Object.fromEntries(((data as TutorialRow[]) ?? []).map((r) => [r.feature_key, r])));
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const withVideo = Object.values(rows).filter((r) => r.youtube_url && r.active).length;
+
+  return (
+    <div className="card">
+      <div className="row">
+        <h2 style={{ margin: 0 }}>Feature tutorials</h2>
+        <span className="muted">shown the first time a member opens each feature · {withVideo}/{TUTORIAL_FEATURES.length} have a video</span>
+      </div>
+      {missing ? (
+        <div className="error-box" style={{ marginTop: 10 }}>
+          Paste migration <code>0095_daily_habits_and_tutorials.sql</code> to edit tutorials. Until then the app shows its built-in text tips.
+        </div>
+      ) : (
+        <table style={{ marginTop: 12 }}>
+          <tbody>
+            {TUTORIAL_FEATURES.map((f) => {
+              const r = rows[f.key];
+              const vid = youtubeIdFrom(r?.youtube_url ?? '');
+              return (
+                <tr key={f.key}>
+                  <td style={{ width: '100%' }}>
+                    <div className="row">
+                      {vid ? (
+                        <img src={`https://img.youtube.com/vi/${vid}/default.jpg`} alt="" style={{ width: 56, borderRadius: 6 }} />
+                      ) : (
+                        <span className="badge dim">no video</span>
+                      )}
+                      <div>
+                        <strong>{f.label}</strong>
+                        <div className="muted">{r?.title ?? 'Built-in text tips'}</div>
+                      </div>
+                      <div className="spacer" />
+                      {r && !r.active && <span className="badge warn">off</span>}
+                      <button className="btn ghost small" onClick={() => setOpen(open === f.key ? null : f.key)}>{open === f.key ? 'Close' : 'Edit'}</button>
+                    </div>
+                    {open === f.key && (
+                      <TutorialEditor
+                        featureKey={f.key}
+                        row={r}
+                        onSaved={async () => {
+                          toast('Tutorial saved — members see it next time they open this feature fresh');
+                          setOpen(null);
+                          await load();
+                        }}
+                      />
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+function TutorialEditor({ featureKey, row, onSaved }: { featureKey: string; row?: TutorialRow; onSaved: () => void }) {
+  const toast = useToast();
+  const [title, setTitle] = useState(row?.title ?? '');
+  const [url, setUrl] = useState(row?.youtube_url ?? '');
+  const [steps, setSteps] = useState((row?.steps ?? []).join('\n'));
+  const [active, setActive] = useState(row?.active ?? true);
+  const [busy, setBusy] = useState(false);
+
+  async function save() {
+    if (!title.trim()) return toast('Give the tutorial a title', 'error');
+    if (url.trim() && !youtubeIdFrom(url)) return toast('That does not look like a YouTube link', 'error');
+    const list = steps.split('\n').map((s) => s.trim()).filter(Boolean);
+    if (list.length === 0) return toast('Add at least one step (one per line)', 'error');
+    setBusy(true);
+    const { error } = await supabase.from('feature_tutorials').upsert(
+      { feature_key: featureKey, title: title.trim(), youtube_url: url.trim() || null, steps: list, active, updated_at: new Date().toISOString() },
+      { onConflict: 'feature_key' }
+    );
+    setBusy(false);
+    if (error) return toast(error.message, 'error');
+    onSaved();
+  }
+
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div className="row">
+        <label className="field grow">Title<input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Log a meal in 5 seconds" /></label>
+        <label className="field">
+          Show it
+          <select className="inline" value={active ? 'on' : 'off'} onChange={(e) => setActive(e.target.value === 'on')}>
+            <option value="on">On</option>
+            <option value="off">Off</option>
+          </select>
+        </label>
+      </div>
+      <label className="field" style={{ marginTop: 10 }}>30-second clip — YouTube link (unlisted works)<input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://youtu.be/… (leave empty for text only)" /></label>
+      <label className="field" style={{ marginTop: 10 }}>Steps — one per line, 2 to 4 is ideal<textarea rows={4} value={steps} onChange={(e) => setSteps(e.target.value)} /></label>
+      <div className="row" style={{ marginTop: 10 }}>
+        <div className="spacer" />
+        <button className="btn" disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Save tutorial'}</button>
+      </div>
     </div>
   );
 }
