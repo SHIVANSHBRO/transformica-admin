@@ -12,7 +12,10 @@ import { useToast } from '../App';
  * rejected here because the app would silently render it as nothing.
  */
 
-type Module = { id: string; slug: string; title: string; subtitle: string | null; accent: string; order_index: number; published: boolean };
+// track: 'training' | 'nutrition' | 'lifestyle' — added by 0096; undefined before it.
+type Module = { id: string; slug: string; title: string; subtitle: string | null; accent: string; order_index: number; published: boolean; track?: string | null };
+
+const TRACK_LABEL: Record<string, string> = { training: 'Train', nutrition: 'Eat', lifestyle: 'Live' };
 type ArticleMeta = { id: string; module_id: string; slug: string; title: string; summary: string | null; read_minutes: number; order_index: number; published: boolean };
 type Question = {
   id: string;
@@ -28,9 +31,12 @@ type Question = {
   published: boolean;
 };
 
-const BLOCK_TYPES = ['p', 'h', 'list', 'callout', 'stat', 'table', 'compare', 'check', 'widget', 'cta', 'bottomline'];
+const BLOCK_TYPES = ['p', 'h', 'list', 'callout', 'stat', 'table', 'compare', 'check', 'widget', 'cta', 'bottomline', 'sources'];
 const TONES = ['tip', 'myth', 'science', 'warn'];
-const WIDGETS = ['motor-units', 'force-velocity', 'volume-curve', 'rir-trainer', 'deload-check', 'split-picker', 'rm-converter'];
+const WIDGETS = [
+  'motor-units', 'force-velocity', 'volume-curve', 'rir-trainer', 'deload-check', 'split-picker', 'rm-converter',
+  'protein-target', 'deficit-planner', 'scale-smoother', 'caffeine-clock',
+];
 
 const BLOCK_HELP = `Block types (one object per block, in reading order):
 {"t":"p","text":"Paragraph. **bold** works."}
@@ -43,7 +49,8 @@ const BLOCK_HELP = `Block types (one object per block, in reading order):
 {"t":"check","q":"Question?","options":["a","b","c"],"answer":1,"why":"Explanation"}
 {"t":"widget","key":"${WIDGETS.join('|')}"}
 {"t":"cta","label":"Button text","to":"workouts|final|article:<slug>"}
-{"t":"bottomline","text":"The one-line takeaway (end every article on one)"}`;
+{"t":"bottomline","text":"The one-line takeaway (end every article on one)"}
+{"t":"sources","items":["Author A et al. (Year). Journal. What it found."]}   (optional, after the bottom line, last)`;
 
 /** Returns a list of problems; empty means the body is safe to publish. */
 function validateBody(raw: string, slugs: Set<string>): { blocks: unknown[] | null; problems: string[] } {
@@ -73,6 +80,11 @@ function validateBody(raw: string, slugs: Set<string>): { blocks: unknown[] | nu
       if (!b.why) problems.push(`${at}: needs "why"`);
     }
     if (b.t === 'widget' && !WIDGETS.includes(b.key)) problems.push(`${at}: unknown widget "${b.key}"`);
+    if (b.t === 'sources') {
+      if (!Array.isArray(b.items) || b.items.length === 0 || b.items.some((x: unknown) => typeof x !== 'string' || !String(x).trim()))
+        problems.push(`${at}: "items" must be a list of source lines`);
+      if (i !== parsed.length - 1) problems.push(`${at}: sources must be the last block`);
+    }
     if (b.t === 'cta') {
       const to = String(b.to ?? '');
       const ok = to === 'workouts' || to === 'final' || (to.startsWith('article:') && slugs.has(to.slice(8)));
@@ -187,6 +199,7 @@ function ModuleCard(props: {
     <div className="card">
       <div className="row">
         <h2 style={{ margin: 0 }}>{m.order_index + 1}. {m.title}</h2>
+        {m.track && <span className="badge dim">{TRACK_LABEL[m.track] ?? m.track}</span>}
         {!m.published && <span className="badge warn">hidden</span>}
         <span className="muted">{articles.length} articles · {questions.length} questions</span>
         <div className="spacer" />

@@ -166,7 +166,16 @@ export type DietMealOption = { label: string; items: DietMealItem[] };
 // `options` (0081): 2-3 swappable menus for one meal. `items` is always present
 // and always equals option 1, so a reader that ignores options still renders a
 // complete plan.
-export type DietMeal = { meal: string; items: DietMealItem[]; options?: DietMealOption[] };
+// kcal / protein_g / carbs_g / fat_g (0099): optional per-meal macros from imported plans.
+export type DietMeal = {
+  meal: string;
+  items: DietMealItem[];
+  options?: DietMealOption[];
+  kcal?: number | null;
+  protein_g?: number | null;
+  carbs_g?: number | null;
+  fat_g?: number | null;
+};
 
 export const DIET_TYPE_LABELS: Record<DietType, string> = {
   veg: 'Vegetarian',
@@ -220,7 +229,14 @@ export type DietPlan = {
 };
 
 export type ProgrammeLevel = 'novice' | 'intermediate' | 'advanced';
-export type ProgrammeGoal = 'strength' | 'hypertrophy' | 'general';
+export type ProgrammeGoal = 'strength' | 'hypertrophy' | 'general' | 'fat_loss'; // fat_loss: 0098
+
+export const PROGRAMME_GOAL_LABELS: Record<ProgrammeGoal, string> = {
+  strength: 'Strength',
+  hypertrophy: 'Muscle',
+  general: 'General',
+  fat_loss: 'Fat loss',
+};
 
 export type WorkoutTemplate = {
   id: string;

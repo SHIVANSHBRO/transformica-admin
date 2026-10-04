@@ -1,8 +1,8 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '../supabase';
 import { useToast } from '../App';
 import { MemberPicker } from '../components/MemberPicker';
-import { Exercise, Profile, WorkoutPlan, WorkoutTemplate, WorkoutTemplateExercise, displayName, formatRir } from '../types';
+import { Exercise, PROGRAMME_GOAL_LABELS, Profile, ProgrammeGoal, WorkoutPlan, WorkoutTemplate, WorkoutTemplateExercise, displayName, formatRir } from '../types';
 
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -37,6 +37,22 @@ export function WorkoutPlans() {
   const [exercises, setExercises] = useState<Exercise[]>([]);
   const [templates, setTemplates] = useState<(WorkoutTemplate & { exercise_count: number })[]>([]);
 
+  // Library filters. They narrow the assign dropdown too.
+  const [q, setQ] = useState('');
+  const [fLevel, setFLevel] = useState('');
+  const [fGoal, setFGoal] = useState('');
+  const [fKind, setFKind] = useState<'' | 'week' | 'session' | 'member'>('');
+  const shown = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    const isRoutine = (t: WorkoutTemplate) => t.title.startsWith('Ultimate ');
+    return templates
+      .filter((t) => !needle || `${t.title} ${t.description ?? ''}`.toLowerCase().includes(needle))
+      .filter((t) => !fLevel || t.level === fLevel)
+      .filter((t) => !fGoal || t.goal === fGoal)
+      .filter((t) => (fKind === 'session' ? isRoutine(t) : fKind === 'week' ? !isRoutine(t) : fKind === 'member' ? t.member_visible : true))
+      .sort((a, b) => a.title.localeCompare(b.title));
+  }, [templates, q, fLevel, fGoal, fKind]);
+
   // Template builder
   const [showBuilder, setShowBuilder] = useState(false);
   const [title, setTitle] = useState('');
@@ -51,7 +67,7 @@ export function WorkoutPlans() {
   // Expandable template preview
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [preview, setPreview] = useState<
-    { name: string; muscle_group: string; sets: number; reps: string; weight: string | null; day: number | null; rir: string | null }[]
+    { name: string; muscle_group: string; sets: number; reps: string; weight: string | null; day: number | null; rir: string | null; rest: number | null; notes: string | null }[]
   >([]);
 
   async function togglePreview(id: string) {
@@ -61,7 +77,7 @@ export function WorkoutPlans() {
     }
     const { data } = await supabase
       .from('workout_plan_template_exercises')
-      .select('sets, reps, target_weight_kg, set_weights_kg, day_of_week, rir_low, rir_high, exercise:exercises(name, muscle_group)')
+      .select('sets, reps, target_weight_kg, set_weights_kg, day_of_week, rir_low, rir_high, rest_seconds, notes, exercise:exercises(name, muscle_group)')
       .eq('template_id', id)
       .order('day_of_week', { nullsFirst: true })
       .order('order_index');
@@ -74,8 +90,12 @@ export function WorkoutPlans() {
         day_of_week: number | null;
         rir_low: number | null;
         rir_high: number | null;
+        rest_seconds: number | null;
+        notes: string | null;
         exercise: { name: string; muscle_group: string };
       }[]) ?? []).map((r) => ({
+        rest: r.rest_seconds,
+        notes: r.notes,
         day: r.day_of_week,
         rir: formatRir(r.rir_low, r.rir_high),
         name: r.exercise?.name ?? '?',
@@ -97,12 +117,14 @@ export function WorkoutPlans() {
   const [memberPlans, setMemberPlans] = useState<WorkoutPlan[]>([]);
 
   const loadTemplates = useCallback(async () => {
-    const { data: tpls } = await supabase.from('workout_plan_templates').select('*').order('created_at', { ascending: false });
-    const list = (tpls as WorkoutTemplate[]) ?? [];
-    const counts = await Promise.all(
-      list.map((t) => supabase.from('workout_plan_template_exercises').select('id', { count: 'exact', head: true }).eq('template_id', t.id))
-    );
-    setTemplates(list.map((t, i) => ({ ...t, exercise_count: counts[i].count ?? 0 })));
+    // One request with an embedded count rather than one per template: the
+    // library holds 80+ templates since 0098.
+    const { data: tpls } = await supabase
+      .from('workout_plan_templates')
+      .select('*, workout_plan_template_exercises(count)')
+      .order('created_at', { ascending: false });
+    const list = (tpls as (WorkoutTemplate & { workout_plan_template_exercises: { count: number }[] })[]) ?? [];
+    setTemplates(list.map(({ workout_plan_template_exercises: c, ...t }) => ({ ...t, exercise_count: c?.[0]?.count ?? 0 })));
   }, []);
 
   useEffect(() => {
@@ -365,9 +387,30 @@ export function WorkoutPlans() {
           </div>
         )}
 
+        <div className="row" style={{ marginTop: 12, gap: 8, flexWrap: 'wrap' }}>
+          <input className="inline" style={{ flex: 1, minWidth: 200 }} placeholder="Search templates (e.g. PHUL, fat loss, home)" value={q} onChange={(e) => setQ(e.target.value)} />
+          <select className="inline" value={fGoal} onChange={(e) => setFGoal(e.target.value)}>
+            <option value="">All goals</option>
+            {(Object.keys(PROGRAMME_GOAL_LABELS) as ProgrammeGoal[]).map((g) => <option key={g} value={g}>{PROGRAMME_GOAL_LABELS[g]}</option>)}
+          </select>
+          <select className="inline" value={fLevel} onChange={(e) => setFLevel(e.target.value)}>
+            <option value="">All levels</option>
+            <option value="novice">Novice</option>
+            <option value="intermediate">Intermediate</option>
+            <option value="advanced">Advanced</option>
+          </select>
+          <select className="inline" value={fKind} onChange={(e) => setFKind(e.target.value as typeof fKind)}>
+            <option value="">Programmes + routines</option>
+            <option value="week">Weekly programmes</option>
+            <option value="session">Single-session routines</option>
+            <option value="member">In the member app</option>
+          </select>
+          <span className="muted">{shown.length} of {templates.length}</span>
+        </div>
+
         <table style={{ marginTop: showBuilder ? 16 : 12 }}>
           <tbody>
-            {templates.map((t) => (
+            {shown.map((t) => (
               <React.Fragment key={t.id}>
                 <tr>
                   <td>
@@ -377,7 +420,7 @@ export function WorkoutPlans() {
                     {(t.level || t.days_per_week) && (
                       <div className="row" style={{ gap: 6, marginTop: 4 }}>
                         {t.level && <span className="badge dim">{t.level}</span>}
-                        {t.goal && <span className="badge dim">{t.goal}</span>}
+                        {t.goal && <span className="badge dim">{PROGRAMME_GOAL_LABELS[t.goal] ?? t.goal}</span>}
                         {t.days_per_week && <span className="badge dim">{t.days_per_week} days/wk</span>}
                       </div>
                     )}
@@ -394,6 +437,7 @@ export function WorkoutPlans() {
                 {expandedId === t.id && (
                   <tr>
                     <td colSpan={4} style={{ background: '#fafbfe' }}>
+                      {t.description && <p className="muted" style={{ margin: '2px 0 10px', maxWidth: 760 }}>{t.description}</p>}
                       {preview.map((e, i) => (
                         <React.Fragment key={i}>
                           {/* Day heading whenever the weekday changes — a whole-week
@@ -410,8 +454,10 @@ export function WorkoutPlans() {
                               {e.sets} × {e.reps}
                               {e.weight != null ? ` @ ${e.weight} kg` : ''}
                               {e.rir ? ` · ${e.rir}` : ''}
+                              {e.rest != null ? ` · rest ${e.rest}s` : ''}
                             </span>
                           </div>
+                          {e.notes && <div className="muted" style={{ fontSize: 12, margin: '-2px 0 4px 8px' }}>{e.notes}</div>}
                         </React.Fragment>
                       ))}
                     </td>
@@ -421,6 +467,9 @@ export function WorkoutPlans() {
             ))}
             {templates.length === 0 && (
               <tr><td className="muted">No templates yet — create your first with “+ New template”.</td></tr>
+            )}
+            {templates.length > 0 && shown.length === 0 && (
+              <tr><td className="muted">No template matches these filters.</td></tr>
             )}
           </tbody>
         </table>
@@ -432,8 +481,8 @@ export function WorkoutPlans() {
         <label className="field" style={{ maxWidth: 420 }}>
           Template
           <select value={tplId} onChange={(e) => setTplId(e.target.value)}>
-            <option value="">— choose a template —</option>
-            {templates.map((t) => (
+            <option value="">— choose a template{shown.length < templates.length ? ` (${shown.length} match the filters above)` : ''} —</option>
+            {shown.map((t) => (
               <option key={t.id} value={t.id}>{t.title} ({t.exercise_count} exercises)</option>
             ))}
           </select>

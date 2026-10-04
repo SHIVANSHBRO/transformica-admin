@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '../supabase';
 import { useToast } from '../App';
 import { MemberPicker } from '../components/MemberPicker';
@@ -40,6 +40,28 @@ export function DietPlans() {
 
   // Expandable template preview
   const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  // Library filters (130+ templates since 0099). They narrow the assign
+  // dropdown too, so "2,800 kcal veg bulking" is two clicks away.
+  const [q, setQ] = useState('');
+  const [fGoal, setFGoal] = useState('');
+  const [fType, setFType] = useState('');
+  const [fBand, setFBand] = useState('');
+  const shown = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    const band = (k: number | null) => {
+      if (!fBand) return true;
+      if (k == null) return fBand === 'none';
+      const [lo, hi] = fBand.split('-').map(Number);
+      return k >= lo && k < hi;
+    };
+    return templates
+      .filter((t) => !needle || `${t.title} ${t.notes ?? ''}`.toLowerCase().includes(needle))
+      .filter((t) => !fGoal || t.goal === fGoal)
+      .filter((t) => !fType || t.diet_type === fType)
+      .filter((t) => band(t.daily_kcal))
+      .sort((a, b) => (a.goal ?? '').localeCompare(b.goal ?? '') || (a.daily_kcal ?? 0) - (b.daily_kcal ?? 0) || a.title.localeCompare(b.title));
+  }, [templates, q, fGoal, fType, fBand]);
 
   const loadTemplates = useCallback(async () => {
     const { data } = await supabase.from('diet_plan_templates').select('*').order('created_at', { ascending: false });
@@ -261,9 +283,31 @@ export function DietPlans() {
           </div>
         )}
 
+        <div className="row" style={{ marginTop: 12, gap: 8, flexWrap: 'wrap' }}>
+          <input className="inline" style={{ flex: 1, minWidth: 200 }} placeholder="Search (e.g. PCOS, keto, lean gain, Navratri)" value={q} onChange={(e) => setQ(e.target.value)} />
+          <select className="inline" value={fGoal} onChange={(e) => setFGoal(e.target.value)}>
+            <option value="">All goals</option>
+            {(Object.keys(DIET_GOAL_LABELS) as DietGoal[]).map((k) => <option key={k} value={k}>{DIET_GOAL_LABELS[k]}</option>)}
+          </select>
+          <select className="inline" value={fType} onChange={(e) => setFType(e.target.value)}>
+            <option value="">Veg, egg & non-veg</option>
+            {(Object.keys(DIET_TYPE_LABELS) as DietType[]).map((k) => <option key={k} value={k}>{DIET_TYPE_LABELS[k]}</option>)}
+          </select>
+          <select className="inline" value={fBand} onChange={(e) => setFBand(e.target.value)}>
+            <option value="">Any calories</option>
+            <option value="0-1800">Under 1,800</option>
+            <option value="1800-2400">1,800–2,399</option>
+            <option value="2400-3000">2,400–2,999</option>
+            <option value="3000-3600">3,000–3,599</option>
+            <option value="3600-9999">3,600+</option>
+            <option value="none">No calorie figure</option>
+          </select>
+          <span className="muted">{shown.length} of {templates.length}</span>
+        </div>
+
         <table style={{ marginTop: showBuilder ? 16 : 12 }}>
           <tbody>
-            {templates.map((t) => (
+            {shown.map((t) => (
               <React.Fragment key={t.id}>
                 <tr>
                   <td>
@@ -271,7 +315,14 @@ export function DietPlans() {
                       {expandedId === t.id ? '▾ ' : '▸ '}{t.title}
                     </button>
                   </td>
-                  <td className="muted">{t.daily_kcal ? `${t.daily_kcal} kcal` : '—'}</td>
+                  <td className="muted">
+                    {t.daily_kcal ? `${t.daily_kcal} kcal` : '—'}
+                    {t.daily_protein_g ? <div style={{ fontSize: 11 }}>P {t.daily_protein_g} · C {t.daily_carbs_g ?? '—'} · F {t.daily_fat_g ?? '—'}</div> : null}
+                  </td>
+                  <td>
+                    <span className="badge dim">{DIET_TYPE_LABELS[t.diet_type] ?? t.diet_type}</span>{' '}
+                    {t.goal && <span className="badge dim">{DIET_GOAL_LABELS[t.goal] ?? t.goal}</span>}
+                  </td>
                   <td className="muted">{t.meals.length} meal{t.meals.length === 1 ? '' : 's'}</td>
                   <td className="muted">{new Date(t.created_at).toLocaleDateString()}</td>
                   <td style={{ textAlign: 'right' }}>
@@ -280,7 +331,7 @@ export function DietPlans() {
                 </tr>
                 {expandedId === t.id && (
                   <tr>
-                    <td colSpan={5} style={{ background: '#fafbfe' }}>
+                    <td colSpan={6} style={{ background: '#fafbfe' }}>
                       {t.meals.map((m, i) => {
                         const line = (items: DietMealItem[]) =>
                           items.map((it) => `${it.name}${it.qty ? ` (${it.qty})` : ''}${it.kcal ? ` · ${it.kcal} kcal` : ''}`).join(' · ');
@@ -291,6 +342,11 @@ export function DietPlans() {
                         return (
                           <div key={i} style={{ padding: '4px 0' }}>
                             <strong>{m.meal}:</strong>{' '}
+                            {m.kcal != null || m.protein_g != null ? (
+                              <span className="badge dim" style={{ marginRight: 6 }}>
+                                {[m.kcal != null ? `${m.kcal} kcal` : null, m.protein_g != null ? `P ${m.protein_g}` : null, m.carbs_g != null ? `C ${m.carbs_g}` : null, m.fat_g != null ? `F ${m.fat_g}` : null].filter(Boolean).join(' · ')}
+                              </span>
+                            ) : null}
                             {options.length > 1 ? (
                               <div style={{ paddingLeft: 12 }}>
                                 {options.map((o, k) => (
@@ -314,6 +370,9 @@ export function DietPlans() {
             {templates.length === 0 && (
               <tr><td className="muted">No templates yet — create your first with “+ New template”.</td></tr>
             )}
+            {templates.length > 0 && shown.length === 0 && (
+              <tr><td className="muted">No template matches these filters.</td></tr>
+            )}
           </tbody>
         </table>
       </div>
@@ -324,9 +383,9 @@ export function DietPlans() {
         <label className="field" style={{ maxWidth: 420 }}>
           Template
           <select value={tplId} onChange={(e) => setTplId(e.target.value)}>
-            <option value="">— choose a template —</option>
-            {templates.map((t) => (
-              <option key={t.id} value={t.id}>{t.title}{t.daily_kcal ? ` (${t.daily_kcal} kcal)` : ''}</option>
+            <option value="">— choose a template{shown.length < templates.length ? ` (${shown.length} match the filters above)` : ''} —</option>
+            {shown.map((t) => (
+              <option key={t.id} value={t.id}>{t.title}{t.daily_kcal && !t.title.includes('kcal') ? ` (${t.daily_kcal} kcal)` : ''}</option>
             ))}
           </select>
         </label>
