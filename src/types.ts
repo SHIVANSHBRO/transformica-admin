@@ -156,7 +156,7 @@ export type WorkoutPlan = {
   created_at: string;
 };
 
-export type DietType = 'veg' | 'egg' | 'non_veg';
+export type DietType = 'veg' | 'egg' | 'non_veg' | 'vegan'; // vegan: 0100
 export type DietGoal = 'bulking' | 'cutting' | 'maintenance' | 'recomp' | 'therapeutic';
 
 // Optional per-item marker (0077). Absent on every plan authored before it, so
@@ -181,6 +181,7 @@ export const DIET_TYPE_LABELS: Record<DietType, string> = {
   veg: 'Vegetarian',
   egg: 'Eggetarian',
   non_veg: 'Non-vegetarian',
+  vegan: 'Vegan',
 };
 
 export const DIET_GOAL_LABELS: Record<DietGoal, string> = {
@@ -209,6 +210,9 @@ export function derivedDietType(meals: DietMeal[], stored: DietType): DietType {
       else if (it.diet === 'veg' && seen === null) seen = 'veg';
     }
   }
+  // Items only carry veg / egg / non_veg, so 'vegan' can only come from the
+  // plan itself; keep it unless the items contradict it.
+  if (stored === 'vegan' && seen !== 'egg') return 'vegan';
   return seen ?? stored;
 }
 
@@ -226,6 +230,10 @@ export type DietPlan = {
   notes: string | null;
   active: boolean;
   created_at: string;
+  /** 0100: who assigned it. Equal to user_id when the member followed a sample plan themselves. */
+  created_by?: string | null;
+  /** 0100: the template it was copied from, when known. */
+  template_id?: string | null;
 };
 
 export type ProgrammeLevel = 'novice' | 'intermediate' | 'advanced';
@@ -290,6 +298,12 @@ export type DietTemplate = {
   meals: DietMeal[];
   notes: string | null;
   created_at: string;
+  // 0100. Optional so the page still loads before the migration is pasted.
+  /** Shown to members under Diet & recipes, where they can follow it. */
+  member_visible?: boolean;
+  /** One or two sentences a member reads on the plan card. */
+  description?: string | null;
+  tags?: string[];
 };
 
 export const PLAN_LABELS: Record<Profile['plan'], string> = {

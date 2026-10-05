@@ -26,6 +26,8 @@ export function DietPlans() {
   const [fat, setFat] = useState('');
   const [meals, setMeals] = useState<DietMeal[]>(structuredClone(DEFAULT_MEALS));
   const [notes, setNotes] = useState('');
+  const [description, setDescription] = useState('');
+  const [publish, setPublish] = useState(false);
   const [savingTpl, setSavingTpl] = useState(false);
 
   // Assignment
@@ -47,6 +49,7 @@ export function DietPlans() {
   const [fGoal, setFGoal] = useState('');
   const [fType, setFType] = useState('');
   const [fBand, setFBand] = useState('');
+  const [fVis, setFVis] = useState('');
   const shown = useMemo(() => {
     const needle = q.trim().toLowerCase();
     const band = (k: number | null) => {
@@ -60,8 +63,9 @@ export function DietPlans() {
       .filter((t) => !fGoal || t.goal === fGoal)
       .filter((t) => !fType || t.diet_type === fType)
       .filter((t) => band(t.daily_kcal))
+      .filter((t) => !fVis || (fVis === 'member' ? !!t.member_visible : !t.member_visible))
       .sort((a, b) => (a.goal ?? '').localeCompare(b.goal ?? '') || (a.daily_kcal ?? 0) - (b.daily_kcal ?? 0) || a.title.localeCompare(b.title));
-  }, [templates, q, fGoal, fType, fBand]);
+  }, [templates, q, fGoal, fType, fBand, fVis]);
 
   const loadTemplates = useCallback(async () => {
     const { data } = await supabase.from('diet_plan_templates').select('*').order('created_at', { ascending: false });
@@ -110,11 +114,14 @@ export function DietPlans() {
       daily_fat_g: fat ? parseInt(fat, 10) : null,
       meals: cleanedMeals,
       notes: notes.trim() || null,
+      // 0100 columns: only sent when used, so saving still works before the paste.
+      ...(description.trim() ? { description: description.trim() } : {}),
+      ...(publish ? { member_visible: true } : {}),
     });
     setSavingTpl(false);
     if (error) return toast(error.message, 'error');
     toast('Template saved to your library');
-    setTitle(''); setKcal(''); setProtein(''); setCarbs(''); setFat(''); setNotes('');
+    setTitle(''); setKcal(''); setProtein(''); setCarbs(''); setFat(''); setNotes(''); setDescription(''); setPublish(false);
     setDietType('veg'); setDietGoal('');
     setMeals(structuredClone(DEFAULT_MEALS));
     setShowBuilder(false);
@@ -126,6 +133,19 @@ export function DietPlans() {
     const { error } = await supabase.from('diet_plan_templates').delete().eq('id', t.id);
     if (error) return toast(error.message, 'error');
     toast('Template deleted');
+    await loadTemplates();
+  }
+
+  // Publishes / unpublishes a template to the member app's Diet & recipes
+  // (0100). Members read only member_visible rows, enforced by RLS, and can
+  // follow one themselves only when no coach plan is active on them.
+  async function toggleVisible(t: DietTemplate) {
+    const { error } = await supabase
+      .from('diet_plan_templates')
+      .update({ member_visible: !t.member_visible })
+      .eq('id', t.id);
+    if (error) return toast(error.message.includes('member_visible') ? 'Paste migration 0100 first' : error.message, 'error');
+    toast(t.member_visible ? `"${t.title}" hidden from members` : `"${t.title}" is now in the member app`);
     await loadTemplates();
   }
 
@@ -276,6 +296,14 @@ export function DietPlans() {
               <textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Drink 3L water. No sugar in tea." />
             </label>
 
+            <label className="field" style={{ marginTop: 10 }}>
+              Short description for the member app (optional, shown on the plan card)
+              <textarea rows={2} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="An everyday vegetarian cut with about 105 g protein from paneer, dal and curd." />
+            </label>
+            <label className="muted" style={{ display: 'block', marginTop: 8, cursor: 'pointer' }}>
+              <input type="checkbox" checked={publish} onChange={(e) => setPublish(e.target.checked)} /> Show in the member app as a sample plan members can follow
+            </label>
+
             <div className="row" style={{ marginTop: 12 }}>
               <div className="spacer" />
               <button className="btn" disabled={savingTpl} onClick={saveTemplate}>{savingTpl ? 'Saving…' : 'Save template'}</button>
@@ -302,6 +330,11 @@ export function DietPlans() {
             <option value="3600-9999">3,600+</option>
             <option value="none">No calorie figure</option>
           </select>
+          <select className="inline" value={fVis} onChange={(e) => setFVis(e.target.value)}>
+            <option value="">Admin + member plans</option>
+            <option value="member">In member app</option>
+            <option value="admin">Admin only</option>
+          </select>
           <span className="muted">{shown.length} of {templates.length}</span>
         </div>
 
@@ -325,13 +358,20 @@ export function DietPlans() {
                   </td>
                   <td className="muted">{t.meals.length} meal{t.meals.length === 1 ? '' : 's'}</td>
                   <td className="muted">{new Date(t.created_at).toLocaleDateString()}</td>
-                  <td style={{ textAlign: 'right' }}>
+                  <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                    <label className="muted" style={{ marginRight: 12, cursor: 'pointer' }} title="Show under Diet & recipes in the member app, where members can follow it">
+                      <input type="checkbox" checked={!!t.member_visible} onChange={() => toggleVisible(t)} /> In member app
+                    </label>
                     <button className="btn danger small" onClick={() => removeTemplate(t)}>Delete</button>
                   </td>
                 </tr>
                 {expandedId === t.id && (
                   <tr>
                     <td colSpan={6} style={{ background: '#fafbfe' }}>
+                      {t.description ? <div style={{ padding: '2px 0 6px' }}>{t.description}</div> : null}
+                      {t.tags?.length ? (
+                        <div style={{ paddingBottom: 6 }}>{t.tags.map((tag) => <span key={tag} className="badge dim" style={{ marginRight: 4 }}>{tag}</span>)}</div>
+                      ) : null}
                       {t.meals.map((m, i) => {
                         const line = (items: DietMealItem[]) =>
                           items.map((it) => `${it.name}${it.qty ? ` (${it.qty})` : ''}${it.kcal ? ` · ${it.kcal} kcal` : ''}`).join(' · ');
