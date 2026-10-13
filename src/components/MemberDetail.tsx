@@ -84,6 +84,7 @@ export function MemberDetail({
         </div>
 
         <StepGoal member={member} onPatch={onPatch} />
+        <FreeTrial member={member} />
 
         <h3 style={{ marginTop: 18 }}>Consultation form {intake === null && <span className="badge warn">not filled yet</span>}{intake?.completed && <span className="badge ok">completed</span>}</h3>
         {intake ? (
@@ -105,6 +106,121 @@ export function MemberDetail({
         <DietLog memberId={member.id} />
       </div>
     </div>
+  );
+}
+
+type TrialClaim = {
+  id: string;
+  user_id: string | null;
+  device_hash: string | null;
+  payer_hashes: string[];
+  status: 'reserved' | 'active' | 'revoked' | 'released';
+  reason: string | null;
+  created_at: string;
+};
+
+const CLAIM_LABEL: Record<TrialClaim['status'], string> = {
+  reserved: 'checkout opened',
+  active: 'trial started',
+  revoked: 'trial refused',
+  released: 'cleared by admin',
+};
+
+/**
+ * The one-trial-per-person record (0102). Shows whether this member has had
+ * a free trial, any trial refused because their phone or payer had already
+ * had one, and how many OTHER accounts share their phone or payer. "Allow one
+ * more trial" sets profiles.trial_override, which create-subscription and the
+ * webhook honour exactly once: for a genuine case such as a shared family
+ * phone, never as a discount.
+ */
+function FreeTrial({ member }: { member: Profile }) {
+  const [state, setState] = useState<{
+    claimedAt: string | null;
+    override: boolean;
+    claims: TrialClaim[];
+    sharedAccounts: number;
+  } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function load() {
+    const [{ data: p, error: pe }, { data: mine, error: ce }] = await Promise.all([
+      supabase.from('profiles').select('trial_claimed_at, trial_override').eq('id', member.id).single(),
+      supabase.from('trial_claims').select('*').eq('user_id', member.id).order('created_at', { ascending: false }),
+    ]);
+    if (pe || ce) {
+      setError((pe ?? ce)!.message.includes('trial_') ? 'Paste migration 0102 to see trial history.' : (pe ?? ce)!.message);
+      return;
+    }
+    const claims = (mine as TrialClaim[]) ?? [];
+    // Other accounts that used a trial on the same phone or with the same payer.
+    const devices = [...new Set(claims.map((c) => c.device_hash).filter((d): d is string => !!d))];
+    const payers = [...new Set(claims.flatMap((c) => c.payer_hashes ?? []))];
+    const others = new Set<string>();
+    if (devices.length) {
+      const { data } = await supabase.from('trial_claims').select('user_id').in('device_hash', devices).or(`user_id.neq.${member.id},user_id.is.null`);
+      (data ?? []).forEach((r) => others.add(r.user_id ?? 'deleted'));
+    }
+    if (payers.length) {
+      const { data } = await supabase.from('trial_claims').select('user_id').overlaps('payer_hashes', payers).or(`user_id.neq.${member.id},user_id.is.null`);
+      (data ?? []).forEach((r) => others.add(r.user_id ?? 'deleted'));
+    }
+    const pr = p as { trial_claimed_at: string | null; trial_override: boolean };
+    setState({ claimedAt: pr.trial_claimed_at, override: pr.trial_override, claims, sharedAccounts: others.size });
+  }
+
+  useEffect(() => {
+    setState(null);
+    setError(null);
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [member.id]);
+
+  async function setOverride(on: boolean) {
+    setBusy(true);
+    const { error: e } = await supabase.from('profiles').update({ trial_override: on }).eq('id', member.id);
+    setBusy(false);
+    if (e) return setError(e.message);
+    await load();
+  }
+
+  return (
+    <>
+      <h3 style={{ marginTop: 18 }}>Free trial</h3>
+      {error ? (
+        <p className="muted">{error}</p>
+      ) : !state ? (
+        <p className="muted">Loading…</p>
+      ) : (
+        <>
+          <p style={{ margin: '4px 0' }}>
+            {state.claimedAt
+              ? <>Used on {new Date(state.claimedAt).toLocaleDateString()}.</>
+              : <>Not used yet.</>}{' '}
+            {state.override && <span className="badge ok">one more trial allowed</span>}{' '}
+            {state.sharedAccounts > 0 && (
+              <span className="badge warn">
+                phone or payer shared with {state.sharedAccounts} other account{state.sharedAccounts === 1 ? '' : 's'}
+              </span>
+            )}
+          </p>
+          {state.claims.length > 0 && (
+            <ul className="muted" style={{ margin: '4px 0 8px', paddingLeft: 18 }}>
+              {state.claims.slice(0, 5).map((c) => (
+                <li key={c.id}>
+                  {new Date(c.created_at).toLocaleDateString()}: {CLAIM_LABEL[c.status]}
+                  {c.reason ? ` (${c.reason === 'payer' ? 'same UPI / card / phone as another account' : c.reason === 'device' ? 'same phone as another account' : 'this account already had one'})` : ''}
+                </li>
+              ))}
+            </ul>
+          )}
+          <button className="btn ghost small" disabled={busy} onClick={() => setOverride(!state.override)}>
+            {busy ? 'Saving…' : state.override ? 'Cancel the extra trial' : 'Allow one more trial'}
+          </button>
+        </>
+      )}
+    </>
   );
 }
 
